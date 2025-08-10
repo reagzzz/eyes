@@ -3,22 +3,109 @@
 import { useState, useTransition } from "react";
 import PricingCalculator from "@/components/PricingCalculator";
 import { useRouter } from "next/navigation";
-import { nanoid } from "nanoid";
 import { Button } from "@/components/ui/Button";
+import { useWallet } from "@solana/wallet-adapter-react";
+import { useWalletModal } from "@solana/wallet-adapter-react-ui";
+import { Connection, SystemProgram, Transaction, TransactionInstruction, PublicKey, clusterApiUrl } from "@solana/web3.js";
+import { useToast } from "@/components/Toast";
 
 export default function CreatePage() {
   const [prompt, setPrompt] = useState("");
   const [count, setCount] = useState<number>(100);
+  const [model, setModel] = useState<string>(process.env.NEXT_PUBLIC_STABILITY_DEFAULT_MODEL || "sd35-medium");
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
+  const { publicKey, sendTransaction, connected } = useWallet();
+  const { setVisible } = useWalletModal();
+  const { show: toast } = useToast();
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    // Flow: Payer (stub) → Générer (stub) → Publier → Voir la page publique
-    startTransition(() => {
-      const id = nanoid(8);
-      // In a real app, initiate payment then generation; here we just navigate
-      router.push(`/collection/${id}`);
+    if (!publicKey || !connected) {
+      setVisible(true);
+      return;
+    }
+
+    startTransition(async () => {
+      try {
+        // 1) Create payment intent
+        const intentRes = await fetch("/api/payments/create-intent", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ wallet: publicKey.toBase58(), count, model }),
+        });
+        if (!intentRes.ok) throw new Error(await intentRes.text());
+        const { paymentId, lamports, sol, treasury, memo } = (await intentRes.json()) as {
+          paymentId: string; lamports: number; sol: number; treasury: string; memo: string;
+        };
+
+        toast(`Montant à payer: ${sol} SOL`, "success");
+
+        // 2) Build and send SOL transfer with memo
+        const endpoint = process.env.NEXT_PUBLIC_SOLANA_RPC_ENDPOINT || process.env.NEXT_PUBLIC_RPC_URL || clusterApiUrl("devnet");
+        const connection = new Connection(endpoint, { commitment: "confirmed" });
+
+        const tx = new Transaction();
+        tx.add(
+          SystemProgram.transfer({ fromPubkey: publicKey, toPubkey: new PublicKey(treasury), lamports })
+        );
+        const memoProgramId = new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
+        // Construct memo data as Node Buffer for web3.js
+        const memoData = typeof Buffer !== "undefined" ? Buffer.from(memo, "utf8") : new Uint8Array(new TextEncoder().encode(memo));
+        tx.add(new TransactionInstruction({ programId: memoProgramId, keys: [], data: memoData as unknown as Buffer }));
+        tx.feePayer = publicKey;
+        tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+
+        const txSig = await sendTransaction(tx, connection);
+
+        // 3) Confirm on server
+        const confirmRes = await fetch("/api/payments/confirm", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ paymentId, txSig }),
+        });
+        if (!confirmRes.ok) throw new Error(await confirmRes.text());
+
+        toast("Paiement confirmé. Lancement de la génération…", "success");
+
+        // 4) Start generation (with Turnstile token if configured) then publish
+        let turnstileToken: string | undefined = undefined;
+        try {
+          const siteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
+          type Turnstile = { render: (el: HTMLElement, opts: { sitekey: string; callback: (t: string) => void; [k: string]: unknown }) => void };
+          const t = (window as unknown as { turnstile?: Turnstile }).turnstile;
+          if (siteKey && t) {
+            turnstileToken = await new Promise<string>((resolve, reject) => {
+              t.render(document.createElement("div"), {
+                sitekey: siteKey,
+                callback: (token: string) => resolve(token),
+                "error-callback": () => reject(new Error("turnstile_error")),
+                action: "generate",
+              });
+            });
+          }
+        } catch {}
+
+        const genRes = await fetch("/api/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt, count, model, turnstileToken }),
+        });
+        if (!genRes.ok) throw new Error(await genRes.text());
+        const { collectionId } = await genRes.json();
+
+        const publishRes = await fetch("/api/collections/publish", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ collectionId, title: prompt.slice(0, 32) || "Collection", mintPriceSol: sol, symbol: "COLL", wallet: publicKey.toBase58() }),
+        });
+        if (!publishRes.ok) throw new Error(await publishRes.text());
+        router.push(`/collection/${collectionId}`);
+      } catch (error: unknown) {
+        console.error("flow_failed", error);
+        const message = error instanceof Error ? error.message : "échec";
+        toast(`Erreur: ${message}`, "error");
+      }
     });
   }
 
@@ -56,10 +143,20 @@ export default function CreatePage() {
           </div>
         </div>
 
+        <div className="space-y-2">
+          <label className="text-sm font-medium">Modèle</label>
+          <input
+            type="text"
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            className="w-full rounded-xl border border-border/60 bg-background px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary/30"
+          />
+        </div>
+
         <div className="flex items-center justify-between">
           <PricingCalculator count={count} />
           <Button type="submit" size="lg" disabled={isPending}>
-            {isPending ? "Traitement…" : "Créer et payer"}
+            {isPending ? "Traitement…" : "Payer et lancer la génération"}
           </Button>
         </div>
       </form>

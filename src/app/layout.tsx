@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import "@solana/wallet-adapter-react-ui/styles.css";
 import Providers from "@/components/Providers";
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
@@ -29,6 +30,18 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+        {/* Cloudflare Turnstile script for client-side token generation */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function(){
+                var s = document.createElement('script');
+                s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js';
+                s.async = true; s.defer = true; document.head.appendChild(s);
+              })();
+            `,
+          }}
+        />
         <ThemeScript />
         <ThemeProvider>
           <Providers>

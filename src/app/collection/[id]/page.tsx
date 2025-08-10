@@ -1,111 +1,117 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
-import { Button } from "@/components/ui/Button";
-import ImageWithSkeleton from "@/components/ImageWithSkeleton";
+import { useWallet } from "@solana/wallet-adapter-react";
+import { useWalletModal } from "@solana/wallet-adapter-react-ui";
+import { Connection, VersionedTransaction, clusterApiUrl } from "@solana/web3.js";
 import { useToast } from "@/components/Toast";
-import { useEffect, useState, useCallback } from "react";
-import { useWallet, useWalletModal } from "@solana/wallet-adapter-react";
+
+type CollectionDto = {
+  _id: string;
+  title?: string;
+  description?: string;
+  metadataUri?: string;
+  symbol?: string;
+  metadataCIDs?: string[];
+};
 
 export default function CollectionPage() {
-  const params = useParams<{ id: string }>();
-  const id = params?.id as string;
-  type Col = { _id:string; title?:string; imageCIDs?:string[] } | null;
-  const [col, setCol] = useState<Col>(null);
-  useEffect(() => {
-    if(!id) return;
-    fetch(`/api/collections/${id}`).then(r=>r.json()).then(setCol);
-  }, [id]);
-
-  const { show } = useToast();
-  const { publicKey } = useWallet();
+  const { publicKey, signTransaction, connected } = useWallet();
   const { setVisible } = useWalletModal();
-  const [minting, setMinting] = useState(false);
-  const [metadataUri, setMetadataUri] = useState<string | undefined>(undefined);
-  const [pinLoading, setPinLoading] = useState(false);
+  const { show } = useToast();
+  const params = useParams<{ id: string }>();
 
-  const isDevUi =
-    (process.env.NEXT_PUBLIC_ENV && process.env.NEXT_PUBLIC_ENV !== "production") ||
-    process.env.NEXT_PUBLIC_SOLANA_NETWORK === "devnet";
+  const [collection, setCollection] = useState<CollectionDto | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  const onGenerateTestMetadata = useCallback(async () => {
-    try {
-      setPinLoading(true);
-      const res = await fetch("/api/test/pin", { method: "POST" });
-      if (!res.ok) throw new Error(`pin_failed (${res.status})`);
-      const data: { metadataUri: string; imageCid: string; jsonCid: string } = await res.json();
-      setMetadataUri(data.metadataUri);
-      show("Metadata de test généré", "success");
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "Unknown error";
-      show(`Erreur génération metadata: ${msg}`, "error");
-    } finally {
-      setPinLoading(false);
-    }
-  }, [show]);
+  useEffect(() => {
+    const id = params?.id as string | undefined;
+    if (!id) return;
+    fetch(`/api/collections/${id}`)
+      .then((res) => res.json())
+      .then((data) => setCollection(data))
+      .catch((err) => console.error("Erreur fetch collection:", err));
+  }, [params]);
 
-  const onMint = useCallback(async () => {
+  const resolveMetadataUri = (col: CollectionDto): string | undefined => {
+    if (col.metadataUri) return col.metadataUri;
+    const cid = col.metadataCIDs && col.metadataCIDs[0];
+    return cid ? `https://gateway.pinata.cloud/ipfs/${cid}` : undefined;
+  };
+
+  const handleMint = async () => {
     if (!publicKey) {
       setVisible(true);
       return;
     }
+    if (!collection) {
+      show("❌ Collection introuvable", "error");
+      return;
+    }
     try {
-      setMinting(true);
-      const wallet = publicKey.toBase58();
-      const body = {
-        wallet,
-        metadataUri: metadataUri ?? "https://gateway.pinata.cloud/ipfs/placeholder.json",
-        name: "Test NFT",
-        symbol: "TST",
-      } satisfies { wallet: string; metadataUri: string; name: string; symbol: string };
-
+      setLoading(true);
       const res = await fetch("/api/mint/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          wallet: publicKey.toBase58(),
+          metadataUri: resolveMetadataUri(collection),
+          name: collection.title || collection._id || "NFT",
+          symbol: collection.symbol || "NFT",
+          collectionId: collection._id,
+        }),
       });
-      if (!res.ok) throw new Error(`Mint failed (${res.status})`);
-      const data: { txSignature: string; mintAddress: string; explorerUrl: string } = await res.json();
-      show(`NFT minté ! `, "success");
-      // Optionally surface link
-      show(`Voir sur explorer`, "info");
-      window.open(data.explorerUrl, "_blank", "noopener,noreferrer");
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "Unknown error";
-      show(`Erreur de mint: ${msg}`, "error");
+      if (!res.ok) throw new Error(await res.text());
+      const { txBase64, mintAddress }: { txBase64: string; mintAddress: string } = await res.json();
+
+      const connection = new Connection(clusterApiUrl("devnet"), "confirmed");
+      const txBytes = Uint8Array.from(atob(txBase64), (c) => c.charCodeAt(0));
+      const transaction = VersionedTransaction.deserialize(txBytes);
+
+      if (!signTransaction) throw new Error("Wallet does not support signTransaction");
+      const signedTx = await signTransaction(transaction);
+      const txid = await connection.sendRawTransaction(signedTx.serialize());
+
+      show(`✅ NFT minté avec succès • ${mintAddress}`, "success");
+      window.open(`https://explorer.solana.com/tx/${txid}?cluster=devnet`, "_blank");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      console.error(err);
+      show(`❌ Erreur lors du mint: ${message}`, "error");
     } finally {
-      setMinting(false);
+      setLoading(false);
     }
-  }, [publicKey, setVisible, show]);
+  };
+
+  if (!collection) {
+    return <div className="p-6 text-gray-500">Chargement de la collection...</div>;
+  }
 
   return (
-    <main className="container px-4 sm:px-6 lg:px-8 py-10">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight">{col?.title || col?._id || "Collection"}</h1>
-        <Button onClick={onMint} size="lg" disabled={!publicKey || minting}>
-          {minting ? "Minting..." : "Mint"}
-        </Button>
-      </div>
+    <div className="p-6">
+      <h1 className="text-2xl font-bold mb-4">{collection.title || collection._id}</h1>
+      {collection.description && <p className="mb-6 text-gray-600">{collection.description}</p>}
 
-      {isDevUi && (
-        <div className="mb-6 rounded-xl border border-border/60 bg-card/60 p-4 flex items-center gap-3 text-sm">
-          <Button size="sm" variant="secondary" onClick={onGenerateTestMetadata} disabled={pinLoading}>
-            {pinLoading ? "Génération…" : "Générer metadata de test"}
-          </Button>
-          {metadataUri && (
-            <span className="truncate text-muted-foreground" title={metadataUri}>
-              {metadataUri}
-            </span>
-          )}
-        </div>
-      )}
-
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-        {(col?.imageCIDs || []).slice(0, 24).map((cid: string, i: number) => (
-          <ImageWithSkeleton key={i} src={`https://gateway.pinata.cloud/ipfs/${cid}`} alt={`image-${i}`} className="aspect-square" />
-        ))}
-      </div>
-    </main>
+      <button
+        className="relative px-6 py-3 bg-gradient-to-r from-purple-500 to-indigo-500 text-white font-semibold rounded-lg shadow-lg hover:scale-105 transition-transform disabled:opacity-50 flex items-center justify-center"
+        onClick={handleMint}
+        disabled={!connected || loading}
+      >
+        {loading && (
+          <svg
+            className="animate-spin mr-2 h-5 w-5 text-white"
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+          >
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+          </svg>
+        )}
+        {loading ? "Minting..." : "Mint NFT"}
+      </button>
+    </div>
   );
 }
 

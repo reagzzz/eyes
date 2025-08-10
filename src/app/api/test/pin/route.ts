@@ -1,22 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
+import { enforceRateLimit } from "@/server/rate-limit";
 import { PNG } from "pngjs";
+import { captureError } from "@/server/monitoring";
 
 async function uploadToPinataFile(buffer: Buffer, filename: string): Promise<string> {
   const jwt = process.env.PINATA_JWT;
   if (!jwt) throw new Error("Missing PINATA_JWT env");
   const form = new FormData();
-  form.append("file", new Blob([buffer]), filename);
+  // Convert Node Buffer to plain ArrayBuffer (avoid SharedArrayBuffer)
+  // Create a fresh ArrayBuffer and copy the data to avoid SharedArrayBuffer types
+  const ab = new ArrayBuffer(buffer.byteLength);
+  new Uint8Array(ab).set(new Uint8Array(buffer));
+  const blob = new Blob([ab], { type: "image/png" });
+  form.append("file", blob, filename);
   const res = await fetch("https://api.pinata.cloud/pinning/pinFileToIPFS", {
     method: "POST",
     headers: { Authorization: `Bearer ${jwt}` },
-    body: form as any,
+    body: form as unknown as BodyInit,
   });
   if (!res.ok) throw new Error(`Pinata file error ${res.status}: ${await res.text()}`);
   const data = (await res.json()) as { IpfsHash: string };
   return data.IpfsHash;
 }
 
-async function uploadToPinataJSON(content: any): Promise<string> {
+async function uploadToPinataJSON(content: Record<string, unknown>): Promise<string> {
   const jwt = process.env.PINATA_JWT;
   if (!jwt) throw new Error("Missing PINATA_JWT env");
   const res = await fetch("https://api.pinata.cloud/pinning/pinJSONToIPFS", {
@@ -32,8 +39,15 @@ async function uploadToPinataJSON(content: any): Promise<string> {
   return data.IpfsHash;
 }
 
-export async function POST(_req: NextRequest) {
+export async function POST(req: NextRequest) {
   try {
+    // Basic rate-limit: 5 req/min per IP
+    try {
+      const ip = req.headers.get("x-forwarded-for") || "unknown";
+      const resIp = await enforceRateLimit(`rl:pin:ip:${ip}`, 5, 60);
+      if (resIp && !resIp.ok) return NextResponse.json({ error: "rate_limited" }, { status: 429 });
+    } catch {}
+
     // 1) Generate 500x500 PNG (solid color)
     const png = new PNG({ width: 500, height: 500 });
     for (let y = 0; y < png.height; y++) {
@@ -60,9 +74,11 @@ export async function POST(_req: NextRequest) {
     const jsonCid = await uploadToPinataJSON(meta);
 
     return NextResponse.json({ metadataUri: `ipfs://${jsonCid}`, imageCid, jsonCid });
-  } catch (e: any) {
+  } catch (e: unknown) {
     console.error("/api/test/pin error:", e);
-    return NextResponse.json({ error: e?.message || "pin_failed" }, { status: 500 });
+    try { captureError(e, { route: "/api/test/pin" }); } catch {}
+    const message = e instanceof Error ? e.message : "pin_failed";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 

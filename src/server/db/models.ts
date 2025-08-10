@@ -7,6 +7,7 @@ const CollectionSchema = new Schema({
   creatorWallet: String,
   supply: Number,
   mintPriceSol: Number,
+  parentCollectionMint: String,
   royaltyBps: { type: Number, default: 0 },
   imageCIDs: [String],
   metadataCIDs: [String],
