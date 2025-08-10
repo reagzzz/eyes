@@ -1,0 +1,19 @@
+[package]
+name = "mint_gate"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "mint_gate"
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+anchor-lang = { version = "0.31.1", features = ["init-if-needed"] }
+
+[features]
+no-entrypoint = []
+no-idl = []
+idl-build = ["anchor-lang/idl-build"]
+cpi = ["no-entrypoint"]
+
+

@@ -1,0 +1,10 @@
+[workspace]
+members = [
+  "programs/mint_gate"
+]
+resolver = "2"
+
+[profile.release]
+overflow-checks = true
+
+

@@ -1,0 +1,17 @@
+[programs.localnet]
+mint_gate = "B3QX4ubjGz1RH3dBKrXwZNyRXtjDMUX2pjApyBBp5KhK"
+
+[programs.devnet]
+mint_gate = "B3QX4ubjGz1RH3dBKrXwZNyRXtjDMUX2pjApyBBp5KhK"
+
+[toolchain]
+anchor_version = "0.31.1"
+
+[provider]
+cluster = "devnet"
+wallet = "~/.config/solana/id.json"
+
+[scripts]
+deploy = "anchor build && anchor deploy"
+
+
