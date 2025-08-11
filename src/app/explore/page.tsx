@@ -2,6 +2,7 @@
 import Link from "next/link";
 import ImageWithSkeleton from "@/components/ImageWithSkeleton";
 import { useOnScrollReveal } from "@/lib/scroll-reveal";
+import ErrorNotice from "@/components/ErrorNotice";
 
 import { useEffect, useState } from "react";
 
@@ -37,11 +38,17 @@ export default function ExplorePage() {
     <main className="container px-4 sm:px-6 lg:px-8 py-12">
       <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight mb-8">Explorer</h1>
       {loading && <div className="text-gray-500 mb-6">Chargement…</div>}
-      {!loading && items.length === 0 && !error && (
-        <div className="text-gray-600 mb-6">Aucune collection live pour l’instant</div>
-      )}
-      {!loading && error && (
-        <div className="text-red-600 mb-6">Une erreur est survenue lors du chargement.</div>
+      {!loading && (error || items.length === 0) && (
+        <div className="mb-8">
+          <ErrorNotice message={error ? "Une erreur est survenue lors du chargement." : "Aucune collection"}>
+            <Link
+              href="/create"
+              className="inline-flex items-center justify-center px-4 py-2 rounded-md bg-gray-900 text-white hover:bg-gray-800"
+            >
+              Créer
+            </Link>
+          </ErrorNotice>
+        </div>
       )}
       <div ref={ref} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
         {items.map((c) => (

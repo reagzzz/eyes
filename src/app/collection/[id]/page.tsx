@@ -6,6 +6,7 @@ import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { Connection, VersionedTransaction, clusterApiUrl } from "@solana/web3.js";
 import { useToast } from "@/components/Toast";
+import ErrorNotice from "@/components/ErrorNotice";
 
 type CollectionDto = {
   _id: string;
@@ -80,7 +81,12 @@ export default function CollectionPage() {
           collectionId: collection._id,
         }),
       });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) {
+        const serverMsg = await res.text().catch(() => "");
+        const msg = serverMsg?.trim() ? serverMsg : `HTTP ${res.status}`;
+        show(`❌ Erreur lors du mint: ${msg}` , "error");
+        return;
+      }
       const { txBase64, mintAddress }: { txBase64: string; mintAddress: string } = await res.json();
 
       const connection = new Connection(clusterApiUrl("devnet"), "confirmed");
@@ -107,16 +113,14 @@ export default function CollectionPage() {
   if (error === "not_found") {
     return (
       <div className="p-6">
-        <div className="rounded-lg border border-gray-200 p-6 text-center">
-          <h2 className="text-xl font-semibold mb-2">Collection introuvable</h2>
-          <p className="text-gray-600 mb-4">La collection demandée n’existe pas ou a été supprimée.</p>
+        <ErrorNotice message="Collection introuvable">
           <a
             href="/explore"
             className="inline-flex items-center justify-center px-4 py-2 rounded-md bg-gray-900 text-white hover:bg-gray-800"
           >
             Retour à l’explore
           </a>
-        </div>
+        </ErrorNotice>
       </div>
     );
   }
