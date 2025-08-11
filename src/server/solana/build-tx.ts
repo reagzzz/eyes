@@ -1,94 +1,214 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
+import { Connection, PublicKey, SystemProgram, TransactionMessage, VersionedTransaction, Keypair, LAMPORTS_PER_SOL } from "@solana/web3.js";
+import {
+  TOKEN_PROGRAM_ID,
+  getAssociatedTokenAddress,
+  createAssociatedTokenAccountInstruction,
+  createInitializeMintInstruction,
+  createMintToInstruction,
+  MINT_SIZE,
+} from "@solana/spl-token";
+import {
+  PROGRAM_ID as TMETA_PROGRAM_ID,
+  createCreateMetadataAccountV3Instruction,
+  createCreateMasterEditionV3Instruction,
+  createSetAndVerifyCollectionInstruction,
+} from "@metaplex-foundation/mpl-token-metadata";
+import * as anchor from "@coral-xyz/anchor";
 import fs from "fs";
 import path from "path";
-import {
-  Connection,
-  PublicKey,
-  SystemProgram,
-  TransactionInstruction,
-} from "@solana/web3.js";
-import { AnchorProvider, Idl, Program, Wallet } from "@coral-xyz/anchor";
-import { deriveConfigPDA, deriveCounterPDA } from "@/server/solana/mintgate";
 
-export type PayAndValidateAccounts = {
-  buyer: PublicKey;
-  creator: PublicKey;
-  platform: PublicKey;
+type BuildMintTxParams = {
+  connection: Connection;
   programId: PublicKey;
-  collectionSeed: PublicKey;
-};
-
-export type CreateNftInput = {
+  buyer: PublicKey;
+  platform: PublicKey;
+  metadataUri: string;
   name: string;
   symbol: string;
-  uri: string;
-  owner: PublicKey;
+  // optionnels
+  parentCollectionMint?: PublicKey | null;
 };
 
-export async function loadIdlFromDisk(): Promise<Idl> {
-  const idlPath = path.join(process.cwd(), "anchor", "target", "idl", "mint_gate.json");
-  const raw = await fs.promises.readFile(idlPath, "utf8");
-  return JSON.parse(raw) as Idl;
+export async function readCollectionSeed(): Promise<Buffer> {
+  const p = path.join(process.cwd(), "anchor-init-output.json");
+  if (!fs.existsSync(p)) throw new Error("anchor-init-output.json not found");
+  const json = JSON.parse(fs.readFileSync(p, "utf8"));
+  const seed = json?.collectionSeed;
+  if (!seed) throw new Error("collectionSeed missing in anchor-init-output.json");
+  // seed est un base58; on veut un PublicKey -> bytes
+  const pk = new PublicKey(seed);
+  return pk.toBytes();
 }
 
-function createAnchorProgram(connection: Connection, idl: Idl, programId: PublicKey): Program<Idl> {
-  const dummyWallet: Wallet = {
-    publicKey: PublicKey.default,
-    // @ts-expect-error payer is required by NodeWallet type but unused here
-    payer: {} as unknown as { publicKey: PublicKey },
-    async signTransaction(tx) { return tx; },
-    async signAllTransactions(txs) { return txs; },
-  };
-  const provider = new AnchorProvider(connection, dummyWallet, { commitment: "confirmed" });
-  // Casting to Program<Idl> keeps type-safety where possible for dynamic IDL
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return new (Program as any)(idl as any, programId, provider) as unknown as Program<Idl>;
+export function deriveConfigPDA(programId: PublicKey, collectionSeedBytes: Buffer){
+  const [pda] = PublicKey.findProgramAddressSync([collectionSeedBytes], programId);
+  return pda;
 }
 
 export async function buildPayAndValidateIx(
   connection: Connection,
-  params: PayAndValidateAccounts,
-): Promise<{ instruction: TransactionInstruction; configPda: PublicKey; counterPda: PublicKey }>{
-  const { buyer, creator, platform, programId, collectionSeed } = params;
-  const idl = await loadIdlFromDisk();
-  const program = createAnchorProgram(connection, idl, programId);
+  programId: PublicKey,
+  buyer: PublicKey,
+  platform: PublicKey,
+  collectionSeedBytes: Buffer
+){
+  // Provider Anchor "light" pour juste construire l'ix
+  const coder = new anchor.BorshCoder(
+    JSON.parse(fs.readFileSync(path.join(process.cwd(), "anchor/target/idl/mint_gate.json"), "utf8"))
+  ) as unknown as anchor.Coder;
+  const provider = new anchor.AnchorProvider(connection, {} as any, { commitment: "confirmed" });
+  const program = new anchor.Program(JSON.parse(fs.readFileSync(path.join(process.cwd(), "anchor/target/idl/mint_gate.json"), "utf8")) as any, programId, provider, coder);
 
-  const [configPda] = deriveConfigPDA(collectionSeed, programId);
-  const [counterPda] = deriveCounterPDA(collectionSeed, buyer, programId);
+  const config = deriveConfigPDA(programId, collectionSeedBytes);
 
   const ix = await program.methods
-    // method has no args
     .payAndValidate()
     .accounts({
       buyer,
-      creator,
+      creator: platform,
       platform,
-      config: configPda,
-      counter: counterPda,
-      collectionSeed,
-      systemProgram: SystemProgram.programId,
+      config,
+      systemProgram: SystemProgram.programId
     })
     .instruction();
 
-  return { instruction: ix, configPda, counterPda };
+  return ix;
 }
 
 export async function buildCreateNftIxs(
-  _connection: Connection,
-  input: CreateNftInput,
-): Promise<{ instructions: TransactionInstruction[]; mint: PublicKey }>{
-  // TODO: Implement via @metaplex-foundation/js builders once client can supply mint signer.
-  // Creating a new Mint account requires an additional signer beyond the wallet.
-  // For now, return no-op instructions and a placeholder mint (derived as a new PublicKey from owner bytes).
-  // This allows the transaction to be signed solely by the wallet while we iterate on the flow.
+  connection: Connection,
+  buyer: PublicKey,
+  metadataUri: string,
+  name: string,
+  symbol: string,
+  parentCollectionMint?: PublicKey | null
+){
+  const mintKeypair = Keypair.generate();
+  const mint = mintKeypair.publicKey;
 
-  // Use a deterministic, but obviously-not-real placeholder tied to the owner for UI continuity.
-  const mint = PublicKey.findProgramAddressSync([
-    Buffer.from("placeholder-mint"),
-    input.owner.toBuffer(),
-  ], SystemProgram.programId)[0];
+  // 1) Compte mint
+  const rent = await connection.getMinimumBalanceForRentExemption(MINT_SIZE);
+  const createMintIx = SystemProgram.createAccount({
+    fromPubkey: buyer,
+    newAccountPubkey: mint,
+    space: MINT_SIZE,
+    lamports: rent,
+    programId: TOKEN_PROGRAM_ID,
+  });
 
-  return { instructions: [], mint };
+  // 2) Init mint (decimals 0, buyer = mint & freeze authority)
+  const initMintIx = createInitializeMintInstruction(mint, 0, buyer, buyer);
+
+  // 3) ATA du buyer
+  const ata = await getAssociatedTokenAddress(mint, buyer);
+  const createAtaIx = createAssociatedTokenAccountInstruction(buyer, ata, buyer, mint);
+
+  // 4) Mint 1 token
+  const mintToIx = createMintToInstruction(mint, ata, buyer, 1);
+
+  // 5) Metadata
+  const [metadataPda] = PublicKey.findProgramAddressSync(
+    [Buffer.from("metadata"), TMETA_PROGRAM_ID.toBuffer(), mint.toBuffer()],
+    TMETA_PROGRAM_ID
+  );
+
+  const metadataIx = createCreateMetadataAccountV3Instruction(
+    {
+      metadata: metadataPda,
+      mint,
+      mintAuthority: buyer,
+      payer: buyer,
+      updateAuthority: buyer,
+    },
+    {
+      createMetadataAccountArgsV3: {
+        data: {
+          name,
+          symbol,
+          uri: metadataUri,
+          sellerFeeBasisPoints: 0, // 0% royalties
+          creators: null,
+          collection: null,
+          uses: null,
+        },
+        isMutable: true,
+        collectionDetails: null,
+      },
+    }
+  );
+
+  // 6) Master Edition (1/1)
+  const [masterEditionPda] = PublicKey.findProgramAddressSync(
+    [Buffer.from("metadata"), TMETA_PROGRAM_ID.toBuffer(), mint.toBuffer(), Buffer.from("edition")],
+    TMETA_PROGRAM_ID
+  );
+
+  const masterEditionIx = createCreateMasterEditionV3Instruction(
+    {
+      edition: masterEditionPda,
+      metadata: metadataPda,
+      updateAuthority: buyer,
+      mint,
+      mintAuthority: buyer,
+      payer: buyer,
+      systemProgram: SystemProgram.programId,
+      tokenProgram: TOKEN_PROGRAM_ID,
+    },
+    { createMasterEditionArgs: { maxSupply: 0 } } // 0 => collection 1/1
+  );
+
+  const ixs = [createMintIx, initMintIx, createAtaIx, mintToIx, metadataIx, masterEditionIx];
+
+  // 7) Optionnel: set & verify collection si parent fourni
+  if (parentCollectionMint) {
+    const [parentMetadata] = PublicKey.findProgramAddressSync(
+      [Buffer.from("metadata"), TMETA_PROGRAM_ID.toBuffer(), parentCollectionMint.toBuffer()],
+      TMETA_PROGRAM_ID
+    );
+    const setColIx = createSetAndVerifyCollectionInstruction(
+      {
+        metadata: metadataPda,
+        collectionAuthority: buyer,        // ⚠️ doit être l’authority de la collection parent (adapter si nécessaire)
+        payer: buyer,
+        updateAuthority: buyer,
+        collectionMint: parentCollectionMint,
+        collection: parentMetadata,
+        collectionMasterEditionAccount: PublicKey.findProgramAddressSync(
+          [Buffer.from("metadata"), TMETA_PROGRAM_ID.toBuffer(), parentCollectionMint.toBuffer(), Buffer.from("edition")],
+          TMETA_PROGRAM_ID
+        )[0],
+      },
+      {}
+    );
+    ixs.push(setColIx);
+  }
+
+  return { ixs, mintKeypair, mintAddress: mint };
+}
+
+export async function composeMintTransaction(params: BuildMintTxParams) {
+  const { connection, programId, buyer, platform, metadataUri, name, symbol, parentCollectionMint } = params;
+
+  // pay_and_validate
+  const seedBytes = await readCollectionSeed();
+  const payIx = await buildPayAndValidateIx(connection, programId, buyer, platform, seedBytes);
+
+  // build NFT ixs
+  const { ixs: nftIxs, mintKeypair, mintAddress } = await buildCreateNftIxs(connection, buyer, metadataUri, name, symbol, parentCollectionMint || undefined);
+
+  const latest = await connection.getLatestBlockhash();
+  const msg = new TransactionMessage({
+    payerKey: buyer,
+    recentBlockhash: latest.blockhash,
+    instructions: [payIx, ...nftIxs],
+  }).compileToV0Message();
+
+  const tx = new VersionedTransaction(msg);
+  // Le serveur signe UNIQUEMENT le mint (nouvelle clé) — le wallet utilisateur signera le reste.
+  tx.sign([mintKeypair]);
+
+  const txBase64 = Buffer.from(tx.serialize()).toString("base64");
+  return { txBase64, recentBlockhash: latest.blockhash, mintAddress: mintAddress.toBase58() };
 }
 
 
