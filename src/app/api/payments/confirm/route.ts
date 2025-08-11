@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Payment } from "@/server/db/models";
 import { connectMongo } from "@/server/db/mongo";
-import { Connection, PublicKey } from "@solana/web3.js";
+import { PublicKey } from "@solana/web3.js";
+import { getConnection, getRpcUrl } from "@/server/solana/rpc";
 
 export async function POST(req: NextRequest){
   await connectMongo();
@@ -14,8 +15,8 @@ export async function POST(req: NextRequest){
   if(!p) return NextResponse.json({ error: "payment_not_found" }, { status: 404 });
 
   // Build a connection (single source of truth)
-  const rpc = (process.env.NEXT_PUBLIC_RPC_URL || "").trim();
-  const connection = new Connection(rpc, { commitment: "confirmed" });
+  const rpc = getRpcUrl();
+  const connection = getConnection("confirmed");
 
   try {
     // Use parsed transaction to easily read transfer and memo

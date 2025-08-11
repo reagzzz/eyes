@@ -1,16 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Connection, PublicKey, SystemProgram, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
+import { PublicKey, SystemProgram, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
+import { getConnection, getRpcUrl } from "@/server/solana/rpc";
 
 export async function POST(req: NextRequest){
   try{
     const { wallet, lamports } = (await req.json()) as { wallet: string; lamports?: number };
     if(!wallet) return NextResponse.json({ error:"missing wallet" }, { status:400 });
 
-    const rpc = (process.env.NEXT_PUBLIC_RPC_URL || "").trim();
+    const rpc = getRpcUrl();
     const to = (process.env.NEXT_PUBLIC_PLATFORM_TREASURY_WALLET || "").trim();
     if(!rpc || !to) return NextResponse.json({ error:"server_env_missing" }, { status:500 });
 
-    const connection = new Connection(rpc, "confirmed");
+    const connection = getConnection("confirmed");
     const fromPk = new PublicKey(wallet);
     const toPk = new PublicKey(to);
 

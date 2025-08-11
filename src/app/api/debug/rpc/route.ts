@@ -1,13 +1,10 @@
 import { NextResponse } from "next/server";
-import { Connection } from "@solana/web3.js";
+import { getRpcUrl } from "@/server/solana/rpc";
 
 export async function GET(){
-  const rpc = (process.env.NEXT_PUBLIC_RPC_URL || "").trim();
+  const rpc = getRpcUrl();
   try{
-    if(!rpc || !rpc.startsWith("http")) {
-      return NextResponse.json({ ok:false, rpc, error:"RPC env invalid" }, { status:500 });
-    }
-    const conn = new Connection(rpc, "confirmed");
+    const conn = new (await import("@solana/web3.js")).Connection(rpc, "confirmed");
     const { blockhash } = await conn.getLatestBlockhash();
     return NextResponse.json({ ok:true, rpc, blockhash });
   }catch(e:any){

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { connectMongo } from "@/server/db/mongo";
 import { Collection } from "@/server/db/models";
-import { Connection, Keypair, PublicKey, SystemProgram, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
+import { Keypair, PublicKey, SystemProgram, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
+import { getConnection, getRpcUrl } from "@/server/solana/rpc";
 import { MINT_SIZE, TOKEN_PROGRAM_ID, createInitializeMintInstruction } from "@solana/spl-token";
 import { PROGRAM_ID as TOKEN_METADATA_PROGRAM_ID, createCreateMetadataAccountV3Instruction } from "@metaplex-foundation/mpl-token-metadata";
 
@@ -19,8 +20,8 @@ export async function POST(req: NextRequest){
       return NextResponse.json({ ok:true, parentCollectionMint: col.parentCollectionMint });
     }
 
-    const rpc = process.env.NEXT_PUBLIC_RPC_URL!;
-    const connection = new Connection(rpc, { commitment: "confirmed" });
+    const rpc = getRpcUrl();
+    const connection = getConnection("confirmed");
 
     // Use the creator wallet as authority (client will sign)
     const authority = new PublicKey(wallet);

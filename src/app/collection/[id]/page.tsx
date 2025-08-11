@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { Connection, VersionedTransaction } from "@solana/web3.js";
+import { getRpcUrl } from "@/server/solana/rpc";
 import { useToast } from "@/components/Toast";
 import ErrorNotice from "@/components/ErrorNotice";
 
@@ -87,7 +88,7 @@ export default function CollectionPage() {
         return;
       }
 
-      const rpc = (process.env.NEXT_PUBLIC_RPC_URL || "").trim();
+      const rpc = getRpcUrl();
       const connection = new Connection(rpc, "confirmed");
       const txBytes = Uint8Array.from(atob(data.tx), (c) => c.charCodeAt(0));
       const tx = VersionedTransaction.deserialize(txBytes);

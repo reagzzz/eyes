@@ -1,4 +1,5 @@
 import { Connection, PublicKey, SystemProgram, TransactionMessage, VersionedTransaction, Keypair, LAMPORTS_PER_SOL } from "@solana/web3.js";
+import { getConnection, getRpcUrl } from "@/server/solana/rpc";
 import {
   TOKEN_PROGRAM_ID,
   getAssociatedTokenAddress,
