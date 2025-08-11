@@ -9,15 +9,40 @@ type ExploreItem = { _id:string; title?:string; coverCID?:string; supply:number;
 
 export default function ExplorePage() {
   const [items, setItems] = useState<ExploreItem[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const ref = useOnScrollReveal<HTMLDivElement>();
 
   useEffect(() => {
-    fetch("/api/explore").then(r=>r.json()).then((d)=> setItems(d.items||[]));
+    (async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        const res = await fetch("/api/explore");
+        if (!res.ok) {
+          setError("failed");
+          return;
+        }
+        const d = await res.json();
+        setItems(d.items || []);
+      } catch (e) {
+        setError("failed");
+      } finally {
+        setLoading(false);
+      }
+    })();
   }, []);
 
   return (
     <main className="container px-4 sm:px-6 lg:px-8 py-12">
       <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight mb-8">Explorer</h1>
+      {loading && <div className="text-gray-500 mb-6">Chargement…</div>}
+      {!loading && items.length === 0 && !error && (
+        <div className="text-gray-600 mb-6">Aucune collection live pour l’instant</div>
+      )}
+      {!loading && error && (
+        <div className="text-red-600 mb-6">Une erreur est survenue lors du chargement.</div>
+      )}
       <div ref={ref} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
         {items.map((c) => (
           <Link
