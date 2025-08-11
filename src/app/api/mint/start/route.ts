@@ -27,7 +27,7 @@ export async function POST(req: NextRequest){
       return NextResponse.json({ error: "missing_params" }, { status: 400 });
     }
 
-    const rpc = process.env.NEXT_PUBLIC_RPC_URL!;
+    const rpc = (process.env.NEXT_PUBLIC_RPC_URL || "").trim();
     const programIdStr = process.env.NEXT_PUBLIC_PROGRAM_ID;
     const platformStr = process.env.NEXT_PUBLIC_PLATFORM_TREASURY_WALLET;
 

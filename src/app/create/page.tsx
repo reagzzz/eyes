@@ -42,7 +42,7 @@ export default function CreatePage() {
         toast(`Montant à payer: ${sol} SOL`, "success");
 
         // 2) Build and send SOL transfer with memo
-        const rpc = process.env.NEXT_PUBLIC_RPC_URL!;
+        const rpc = (process.env.NEXT_PUBLIC_RPC_URL || "").trim();
         const connection = new Connection(rpc, { commitment: "confirmed" });
 
         const tx = new Transaction();

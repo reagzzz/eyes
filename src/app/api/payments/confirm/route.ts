@@ -14,7 +14,7 @@ export async function POST(req: NextRequest){
   if(!p) return NextResponse.json({ error: "payment_not_found" }, { status: 404 });
 
   // Build a connection (single source of truth)
-  const rpc = process.env.NEXT_PUBLIC_RPC_URL!;
+  const rpc = (process.env.NEXT_PUBLIC_RPC_URL || "").trim();
   const connection = new Connection(rpc, { commitment: "confirmed" });
 
   try {

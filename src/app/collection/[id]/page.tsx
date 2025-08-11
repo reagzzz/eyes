@@ -89,7 +89,7 @@ export default function CollectionPage() {
       }
       const { txBase64, mintAddress }: { txBase64: string; mintAddress: string } = await res.json();
 
-      const rpc = process.env.NEXT_PUBLIC_RPC_URL!;
+      const rpc = (process.env.NEXT_PUBLIC_RPC_URL || "").trim();
       const connection = new Connection(rpc, "confirmed");
       const txBytes = Uint8Array.from(atob(txBase64), (c) => c.charCodeAt(0));
       const transaction = VersionedTransaction.deserialize(txBytes);
