@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "worker": "tsx src/server/worker/index.ts"
+    "worker": "tsx src/server/worker/index.ts",
+    "tree:api": "tsx tools/print-tree.ts"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.31.1",
