@@ -24,14 +24,32 @@ export default function CollectionPage() {
 
   const [collection, setCollection] = useState<CollectionDto | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const id = params?.id as string | undefined;
     if (!id) return;
-    fetch(`/api/collections/${id}`)
-      .then((res) => res.json())
-      .then((data) => setCollection(data))
-      .catch((err) => console.error("Erreur fetch collection:", err));
+    let cancelled = false;
+    (async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        const res = await fetch(`/api/collections/${id}`);
+        if (!res.ok) {
+          setError("not_found");
+          return;
+        }
+        const data: CollectionDto = await res.json();
+        if (!cancelled) setCollection(data);
+      } catch (err) {
+        console.error("Erreur fetch collection:", err);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [params]);
 
   const resolveMetadataUri = (col: CollectionDto): string | undefined => {
@@ -84,9 +102,26 @@ export default function CollectionPage() {
     }
   };
 
-  if (!collection) {
-    return <div className="p-6 text-gray-500">Chargement de la collection...</div>;
+  if (loading && !collection) return <div className="p-6 text-gray-500">Chargement…</div>;
+
+  if (error === "not_found") {
+    return (
+      <div className="p-6">
+        <div className="rounded-lg border border-gray-200 p-6 text-center">
+          <h2 className="text-xl font-semibold mb-2">Collection introuvable</h2>
+          <p className="text-gray-600 mb-4">La collection demandée n’existe pas ou a été supprimée.</p>
+          <a
+            href="/explore"
+            className="inline-flex items-center justify-center px-4 py-2 rounded-md bg-gray-900 text-white hover:bg-gray-800"
+          >
+            Retour à l’explore
+          </a>
+        </div>
+      </div>
+    );
   }
+
+  if (!collection) return <div className="p-6 text-gray-500">Chargement…</div>;
 
   return (
     <div className="p-6">
