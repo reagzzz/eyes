@@ -18,7 +18,7 @@ type CollectionDto = {
 };
 
 export default function CollectionPage() {
-  const { publicKey, signTransaction, connected } = useWallet();
+  const { publicKey, signTransaction, connected, sendTransaction } = useWallet();
   const { setVisible } = useWalletModal();
   const { show } = useToast();
   const params = useParams<{ id: string }>();
@@ -73,33 +73,41 @@ export default function CollectionPage() {
       const res = await fetch("/api/mint/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          wallet: publicKey.toBase58(),
-          metadataUri: resolveMetadataUri(collection),
-          name: collection.title || collection._id || "NFT",
-          symbol: collection.symbol || "NFT",
-          collectionId: collection._id,
-        }),
+        body: JSON.stringify({ wallet: publicKey.toBase58(), lamports: 10000 }),
       });
       if (!res.ok) {
         const serverMsg = await res.text().catch(() => "");
         const msg = serverMsg?.trim() ? serverMsg : `HTTP ${res.status}`;
-        show(`❌ Erreur lors du mint: ${msg}` , "error");
+        show(`❌ Compose failed: ${msg}` , "error");
         return;
       }
-      const { txBase64, mintAddress }: { txBase64: string; mintAddress: string } = await res.json();
+      const data = (await res.json()) as { ok: boolean; tx?: string };
+      if (!data.ok || !data.tx) {
+        show("❌ Compose failed: no_tx", "error");
+        return;
+      }
 
       const rpc = (process.env.NEXT_PUBLIC_RPC_URL || "").trim();
       const connection = new Connection(rpc, "confirmed");
-      const txBytes = Uint8Array.from(atob(txBase64), (c) => c.charCodeAt(0));
-      const transaction = VersionedTransaction.deserialize(txBytes);
+      const txBytes = Uint8Array.from(atob(data.tx), (c) => c.charCodeAt(0));
+      const tx = VersionedTransaction.deserialize(txBytes);
 
-      if (!signTransaction) throw new Error("Wallet does not support signTransaction");
-      const signedTx = await signTransaction(transaction);
-      const txid = await connection.sendRawTransaction(signedTx.serialize());
+      let sig: string;
+      const w = (window as unknown as { solana?: { signAndSendTransaction?: (t: VersionedTransaction) => Promise<{ signature: string } | string> } }).solana;
+      if (w?.signAndSendTransaction) {
+        const r = await w.signAndSendTransaction(tx);
+        sig = typeof r === "string" ? r : r.signature;
+      } else if (sendTransaction) {
+        sig = await sendTransaction(tx, connection);
+      } else if (signTransaction) {
+        const signed = await signTransaction(tx);
+        sig = await connection.sendRawTransaction(signed.serialize());
+      } else {
+        throw new Error("Wallet cannot send transaction");
+      }
 
-      show(`✅ NFT minté avec succès • ${mintAddress}`, "success");
-      window.open(`https://explorer.solana.com/tx/${txid}?cluster=devnet`, "_blank");
+      show(`✅ Tx envoyée`, "success");
+      window.open(`https://explorer.solana.com/tx/${sig}?cluster=devnet`, "_blank", "noreferrer");
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Unknown error";
       console.error(err);

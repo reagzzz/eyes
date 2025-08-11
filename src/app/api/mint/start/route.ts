@@ -1,63 +1,36 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Connection, PublicKey, clusterApiUrl } from "@solana/web3.js";
-import { composeMintTransaction } from "@/server/solana/build-tx";
-import { MongoClient, ObjectId } from "mongodb";
-
-async function getParentCollectionMintFromDB(id?: string | null): Promise<string | null> {
-  try {
-    if (!id) return null;
-    const uri = process.env.MONGODB_URI;
-    if (!uri) return null;
-    const client = await MongoClient.connect(uri);
-    const db = client.db(process.env.MONGODB_DB || "nftgen");
-    const col = db.collection("collections");
-    const doc = await col.findOne({ _id: new ObjectId(id) }, { projection: { parentCollectionMint: 1 } });
-    await client.close();
-    return (doc?.parentCollectionMint as string) || null;
-  } catch {
-    return null;
-  }
-}
+import { Connection, PublicKey, SystemProgram, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
 
 export async function POST(req: NextRequest){
   try{
-    const { wallet, metadataUri, name, symbol, collectionId } = await req.json();
-
-    if(!wallet || !metadataUri || !name || !symbol){
-      return NextResponse.json({ error: "missing_params" }, { status: 400 });
-    }
+    const { wallet, lamports } = (await req.json()) as { wallet: string; lamports?: number };
+    if(!wallet) return NextResponse.json({ error:"missing wallet" }, { status:400 });
 
     const rpc = (process.env.NEXT_PUBLIC_RPC_URL || "").trim();
-    const programIdStr = process.env.NEXT_PUBLIC_PROGRAM_ID;
-    const platformStr = process.env.NEXT_PUBLIC_PLATFORM_TREASURY_WALLET;
-
-    if(!programIdStr || !platformStr){
-      return NextResponse.json({ error: "server_not_configured" }, { status: 500 });
-    }
+    const to = (process.env.NEXT_PUBLIC_PLATFORM_TREASURY_WALLET || "").trim();
+    if(!rpc || !to) return NextResponse.json({ error:"server_env_missing" }, { status:500 });
 
     const connection = new Connection(rpc, "confirmed");
-    const buyer = new PublicKey(wallet);
-    const programId = new PublicKey(programIdStr);
-    const platform = new PublicKey(platformStr);
+    const fromPk = new PublicKey(wallet);
+    const toPk = new PublicKey(to);
 
-    const parentMintStr = await getParentCollectionMintFromDB(collectionId || null);
-    const parentCollectionMint = parentMintStr ? new PublicKey(parentMintStr) : null;
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
 
-    const { txBase64, recentBlockhash, mintAddress } = await composeMintTransaction({
-      connection,
-      programId,
-      buyer,
-      platform,
-      metadataUri,
-      name,
-      symbol,
-      parentCollectionMint
-    });
+    const amount = Math.max(10000, Number(lamports||0) | 0);
+    const ix = SystemProgram.transfer({ fromPubkey: fromPk, toPubkey: toPk, lamports: amount });
 
-    return NextResponse.json({ txBase64, recentBlockhash, mintAddress });
+    const msg = new TransactionMessage({
+      payerKey: fromPk,
+      recentBlockhash: blockhash,
+      instructions: [ix],
+    }).compileToV0Message();
+
+    const tx = new VersionedTransaction(msg);
+    const txb64 = Buffer.from(tx.serialize({ requireAllSignatures:false })).toString("base64");
+
+    return NextResponse.json({ ok:true, tx: txb64, blockhash, lastValidBlockHeight });
   }catch(e:any){
-    console.error("/api/mint/start error:", e);
-    return NextResponse.json({ error: e.message || "internal_error" }, { status: 500 });
+    return NextResponse.json({ ok:false, error: e.message ?? "compose_failed" }, { status:500 });
   }
 }
 
