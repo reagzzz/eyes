@@ -7,7 +7,7 @@ import { PhantomWalletAdapter } from "@solana/wallet-adapter-wallets";
 import { ToastProvider } from "@/components/Toast";
 
 const Providers: FC<PropsWithChildren> = ({ children }) => {
-  const endpoint = process.env.NEXT_PUBLIC_SOLANA_RPC_ENDPOINT || "https://api.mainnet-beta.solana.com";
+  const endpoint = process.env.NEXT_PUBLIC_RPC_URL || "https://api.mainnet-beta.solana.com";
 
   const wallets = useMemo(() => [new PhantomWalletAdapter()], []);
 

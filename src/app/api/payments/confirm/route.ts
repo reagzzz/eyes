@@ -13,8 +13,8 @@ export async function POST(req: NextRequest){
   const p = await Payment.findById(paymentId);
   if(!p) return NextResponse.json({ error: "payment_not_found" }, { status: 404 });
 
-  // Build a connection
-  const rpc = process.env.NEXT_PUBLIC_SOLANA_RPC_ENDPOINT || process.env.NEXT_PUBLIC_RPC_URL || "https://api.devnet.solana.com";
+  // Build a connection (single source of truth)
+  const rpc = process.env.NEXT_PUBLIC_RPC_URL!;
   const connection = new Connection(rpc, { commitment: "confirmed" });
 
   try {

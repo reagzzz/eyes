@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
-import { Connection, VersionedTransaction, clusterApiUrl } from "@solana/web3.js";
+import { Connection, VersionedTransaction } from "@solana/web3.js";
 import { useToast } from "@/components/Toast";
 import ErrorNotice from "@/components/ErrorNotice";
 
@@ -89,7 +89,8 @@ export default function CollectionPage() {
       }
       const { txBase64, mintAddress }: { txBase64: string; mintAddress: string } = await res.json();
 
-      const connection = new Connection(clusterApiUrl("devnet"), "confirmed");
+      const rpc = process.env.NEXT_PUBLIC_RPC_URL!;
+      const connection = new Connection(rpc, "confirmed");
       const txBytes = Uint8Array.from(atob(txBase64), (c) => c.charCodeAt(0));
       const transaction = VersionedTransaction.deserialize(txBytes);
 

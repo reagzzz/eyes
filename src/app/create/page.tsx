@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
-import { Connection, SystemProgram, Transaction, TransactionInstruction, PublicKey, clusterApiUrl } from "@solana/web3.js";
+import { Connection, SystemProgram, Transaction, TransactionInstruction, PublicKey } from "@solana/web3.js";
 import { useToast } from "@/components/Toast";
 
 export default function CreatePage() {
@@ -42,8 +42,8 @@ export default function CreatePage() {
         toast(`Montant à payer: ${sol} SOL`, "success");
 
         // 2) Build and send SOL transfer with memo
-        const endpoint = process.env.NEXT_PUBLIC_SOLANA_RPC_ENDPOINT || process.env.NEXT_PUBLIC_RPC_URL || clusterApiUrl("devnet");
-        const connection = new Connection(endpoint, { commitment: "confirmed" });
+        const rpc = process.env.NEXT_PUBLIC_RPC_URL!;
+        const connection = new Connection(rpc, { commitment: "confirmed" });
 
         const tx = new Transaction();
         tx.add(
