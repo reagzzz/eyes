@@ -107,6 +107,15 @@ export default function CollectionPage() {
         throw new Error("Wallet cannot send transaction");
       }
 
+      // Confirm with backend for robustness
+      try {
+        await fetch("/api/payments/confirm", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ signature: sig }),
+        });
+      } catch {}
+
       show(`✅ Tx envoyée`, "success");
       window.open(`https://explorer.solana.com/tx/${sig}?cluster=devnet`, "_blank", "noreferrer");
     } catch (err: unknown) {

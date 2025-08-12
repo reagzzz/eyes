@@ -3,29 +3,48 @@ import { Payment } from "@/server/db/models";
 import { connectMongo } from "@/server/db/mongo";
 import { PublicKey } from "@solana/web3.js";
 import { getConnection, getRpcUrl } from "@/server/solana/rpc";
+import { waitForFinalized } from "@/server/solana/confirm";
 
 export async function POST(req: NextRequest){
-  await connectMongo();
-  const { paymentId, txSig } = await req.json();
-  if(!paymentId || !txSig){
-    return NextResponse.json({ error: "missing_params" }, { status: 400 });
+  // Accept both simple signature flow and legacy payment verification
+  const body = await req.json();
+  const signature: string | undefined = body?.signature || body?.txSig;
+  const paymentId: string | undefined = body?.paymentId;
+  if (!signature && !paymentId) {
+    return NextResponse.json({ ok:false, error: "missing_signature" }, { status: 400 });
   }
 
-  const p = await Payment.findById(paymentId);
-  if(!p) return NextResponse.json({ error: "payment_not_found" }, { status: 404 });
-
-  // Build a connection (single source of truth)
   const rpc = getRpcUrl();
   const connection = getConnection("confirmed");
+  console.log("[confirm] rpc=", rpc);
+  if (signature) console.log("[confirm] signature=", signature);
+
+  // Always wait for finalization first to avoid tx_not_found races
+  if (signature) {
+    const res = await waitForFinalized(connection, signature, 45000, 900);
+    if (!res.ok) {
+      console.warn("[confirm] not finalized:", res);
+      return NextResponse.json({ ok:false, error: res.reason }, { status: 504 });
+    }
+  }
+
+  // If no paymentId, stop here (smoke test path)
+  if (!paymentId) {
+    return NextResponse.json({ ok:true });
+  }
+
+  await connectMongo();
+  const p = await Payment.findById(paymentId);
+  if(!p) return NextResponse.json({ ok:false, error: "payment_not_found" }, { status: 404 });
 
   try {
-    // Use parsed transaction to easily read transfer and memo
-    const tx = await connection.getParsedTransaction(txSig, {
+    // After finalization, parse to verify transfer + memo
+    const tx = await connection.getParsedTransaction(signature!, {
       maxSupportedTransactionVersion: 0,
-      commitment: "confirmed",
+      commitment: "finalized",
     });
 
-    if(!tx) return NextResponse.json({ error: "tx_not_found" }, { status: 404 });
+    if(!tx) return NextResponse.json({ ok:false, error: "tx_not_found" }, { status: 404 });
 
     const treasury = new PublicKey(process.env.NEXT_PUBLIC_PLATFORM_TREASURY_WALLET!);
     const expectedMemo = `nftgen:${p.reference}`;
@@ -37,7 +56,6 @@ export async function POST(req: NextRequest){
 
     type ParsedIx = { program?: string; parsed?: { type?: string; info?: Record<string, unknown>; memo?: string } };
     for (const ix of instructions as ParsedIx[]) {
-      // System transfer check
       if (ix.program === "system" && ix.parsed?.type === "transfer") {
         const dest = ix.parsed.info?.destination;
         const lamports = Number(ix.parsed.info?.lamports || 0);
@@ -45,10 +63,7 @@ export async function POST(req: NextRequest){
           hasValidTransfer = true;
         }
       }
-
-      // SPL Memo check
       if (ix.program === "spl-memo") {
-        // Different RPCs may shape parsed memo slightly differently
         const memo = ix.parsed?.info?.memo ?? ix.parsed?.memo ?? ix.parsed?.info ?? null;
         if (typeof memo === "string" && memo === expectedMemo) {
           hasValidMemo = true;
@@ -57,14 +72,15 @@ export async function POST(req: NextRequest){
     }
 
     if (!hasValidTransfer || !hasValidMemo) {
-      return NextResponse.json({ error: "payment_not_verified", hasValidTransfer, hasValidMemo }, { status: 400 });
+      return NextResponse.json({ ok:false, error: "payment_not_verified", hasValidTransfer, hasValidMemo }, { status: 400 });
     }
 
-    await Payment.updateOne({ _id: paymentId }, { $set: { txSig, status: "confirmed" } });
+    await Payment.updateOne({ _id: paymentId }, { $set: { txSig: signature, status: "confirmed" } });
     return NextResponse.json({ ok: true });
   } catch (e: unknown) {
+    console.error("[confirm] error:", (e as Error)?.message || e);
     const message = e instanceof Error ? e.message : "verification_failed";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ ok:false, error: message }, { status: 500 });
   }
 }
 
