@@ -2,42 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { enforceRateLimit } from "@/server/rate-limit";
 import { PNG } from "pngjs";
 import { captureError } from "@/server/monitoring";
+import { pinFileToIPFS, pinJSONToIPFS } from "@/server/pinata";
 
-async function uploadToPinataFile(buffer: Buffer, filename: string): Promise<string> {
-  const jwt = process.env.PINATA_JWT;
-  if (!jwt) throw new Error("Missing PINATA_JWT env");
-  const form = new FormData();
-  // Convert Node Buffer to plain ArrayBuffer (avoid SharedArrayBuffer)
-  // Create a fresh ArrayBuffer and copy the data to avoid SharedArrayBuffer types
-  const ab = new ArrayBuffer(buffer.byteLength);
-  new Uint8Array(ab).set(new Uint8Array(buffer));
-  const blob = new Blob([ab], { type: "image/png" });
-  form.append("file", blob, filename);
-  const res = await fetch("https://api.pinata.cloud/pinning/pinFileToIPFS", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${jwt}` },
-    body: form as unknown as BodyInit,
-  });
-  if (!res.ok) throw new Error(`Pinata file error ${res.status}: ${await res.text()}`);
-  const data = (await res.json()) as { IpfsHash: string };
-  return data.IpfsHash;
-}
-
-async function uploadToPinataJSON(content: Record<string, unknown>): Promise<string> {
-  const jwt = process.env.PINATA_JWT;
-  if (!jwt) throw new Error("Missing PINATA_JWT env");
-  const res = await fetch("https://api.pinata.cloud/pinning/pinJSONToIPFS", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${jwt}`,
-    },
-    body: JSON.stringify({ pinataContent: content }),
-  });
-  if (!res.ok) throw new Error(`Pinata json error ${res.status}: ${await res.text()}`);
-  const data = (await res.json()) as { IpfsHash: string };
-  return data.IpfsHash;
-}
+// Factorized into '@/server/pinata'
 
 export async function POST(req: NextRequest) {
   try {
