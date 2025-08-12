@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { generateImagesStability } from "@/server/ai/stability";
+import { generateImages } from "@/server/stability";
 import { uploadToPinataFile, uploadToPinataJSON } from "@/server/ipfs";
 
 export async function POST(req: NextRequest) {
@@ -11,7 +12,18 @@ export async function POST(req: NextRequest) {
 
     if (!prompt) return NextResponse.json({ ok:false, error:"missing_prompt" }, { status: 400 });
 
-    const pngs = await generateImagesStability({ prompt, count, model });
+    let pngs: Buffer[] = [];
+    const hasApiKey = Boolean((process.env.STABILITY_API_KEY || "").trim());
+    if (hasApiKey) {
+      try {
+        pngs = await generateImagesStability({ prompt, count, model });
+      } catch (e) {
+        console.warn("[/api/generate] stability failed, fallback local:", (e as Error)?.message || e);
+        pngs = await generateImages({ prompt, count, model: (model as any) });
+      }
+    } else {
+      pngs = await generateImages({ prompt, count, model: (model as any) });
+    }
 
     const items: Array<{ imageCid: string; metadataCid: string; imageUri: string; metadataUri: string }> = [];
     for (let i = 0; i < pngs.length; i++) {

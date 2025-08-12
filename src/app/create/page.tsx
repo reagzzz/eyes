@@ -95,31 +95,71 @@ export default function CreatePage() {
           lamportsToTreasury: confirmJson?.totalToTreasury ?? null,
         });
 
-        // 4) Chaînage de création de collection (nouvel endpoint)
+        // 4) Génération d'images via IA
+        toast("Génération en cours…", "success");
+        const genRes = await fetch("/api/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt, count, model }),
+        });
+        if (!genRes.ok) {
+          const t = await genRes.text();
+          console.error("[flow] generate_failed", genRes.status, t);
+          toast(`Erreur génération: ${genRes.status}`, "error");
+          return;
+        }
+        const gen = await genRes.json().catch(() => ({} as any));
+        if (!gen?.ok || !Array.isArray(gen?.items) || gen.items.length === 0) {
+          console.error("[flow] generate bad body", gen);
+          toast("Aucune image générée", "error");
+          return;
+        }
+        toast(`${gen.items.length} image(s) générée(s)`, "success");
+
+        // 5) Mint (MVP: utilise le premier metadataUri)
+        const first = gen.items[0];
+        toast("Mint en cours…", "success");
+        const mintRes = await fetch("/api/mint/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            wallet: publicKey!.toBase58(),
+            metadataUri: first.metadataUri,
+            name: "AI NFT",
+            symbol: "AINFT",
+          }),
+        });
+        if (!mintRes.ok) {
+          const t = await mintRes.text();
+          console.error("[flow] mint_failed", mintRes.status, t);
+          toast(`Erreur mint: ${mintRes.status}`, "error");
+          return;
+        }
+        const mintJson = await mintRes.json().catch(() => ({} as any));
+        console.log("[mint]", mintJson);
+        toast("NFT minté !", "success");
+
+        // 6) Sauvegarde de la collection
         setPublishing(true);
         try {
-          const bodyCreate = {
-            prompt,
-            count,
-            model,
-            payer: publicKey!.toBase58(),
-            signature: txSig,
-            expectedLamports: lamports,
-          };
           const resCreate = await fetch("/api/collections/create", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(bodyCreate),
+            body: JSON.stringify({
+              title: prompt?.slice(0, 64) || "AI Collection",
+              imageCIDs: gen.items.map((x: any) => x.imageCid),
+              metadataURIs: gen.items.map((x: any) => x.metadataUri),
+            }),
           });
           const j = await resCreate.json().catch(() => ({} as any));
           if (!resCreate.ok || !j?.ok) {
-            console.error("[flow] create failed:", { status: resCreate.status, body: j });
-            toast(`Erreur création: ${j?.message || resCreate.status}`, "error");
-            return; // rester sur place
+            console.error("[flow] save collection failed:", { status: resCreate.status, body: j });
+            toast(`Erreur création: ${j?.error || resCreate.status}`, "error");
+            return;
           }
           toast("Collection publiée ✅", "success");
-          router.push(`/collection/${j.collectionId}`);
-          return; // stoppe l'ancien flow
+          router.push(`/collection/${j.id}`);
+          return;
         } finally {
           setPublishing(false);
         }
