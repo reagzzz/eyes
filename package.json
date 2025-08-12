@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "worker": "tsx src/server/worker/index.ts",
-    "tree:api": "tsx tools/print-tree.ts"
+    "tree:api": "tools/tree.sh"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.31.1",
