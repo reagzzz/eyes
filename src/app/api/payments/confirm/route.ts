@@ -3,6 +3,20 @@ import { Payment } from "@/server/db/models";
 import { connectMongo } from "@/server/db/mongo";
 import { Connection, PublicKey } from "@solana/web3.js";
 
+function maskRpc(url: string) {
+  return url.replace(/(api-key=)[^&]+/i, "$1***");
+}
+
+async function getSignatureStatus(connection: Connection, signature: string) {
+  const st = (await connection.getSignatureStatuses([signature], { searchTransactionHistory: true })).value[0];
+  if (!st) return { status: "pending" as const };
+  if (st.err) return { status: "err" as const, err: typeof st.err === "string" ? st.err : "tx_err" };
+  const cs = st.confirmationStatus as "processed" | "confirmed" | "finalized" | null | undefined;
+  if (cs === "finalized") return { status: "finalized" as const };
+  if (cs === "confirmed") return { status: "confirmed" as const };
+  return { status: "pending" as const };
+}
+
 export async function POST(req: NextRequest) {
   const startedAt = Date.now();
   const body = await req.json().catch(() => ({}));
@@ -17,40 +31,38 @@ export async function POST(req: NextRequest) {
   const rpc = (process.env.NEXT_PUBLIC_RPC_URL || "").trim();
   if (!rpc) return NextResponse.json({ ok: false, error: "missing_rpc" }, { status: 500 });
   const connection = new Connection(rpc, "confirmed");
-  const maskedRpc = rpc.replace(/(api-key=)[^&]+/i, "$1***");
+  const maskedRpc = maskRpc(rpc);
   console.log(`[confirm] rpc=${maskedRpc}`);
   console.log(`[confirm] signature=${signature.slice(0, 6)}...${signature.slice(-6)} start=${new Date(startedAt).toISOString()}`);
-
-  // Timeout global 95s pour éviter coupe côté Next
-  let timedOut = false;
-  const hardTimeout = setTimeout(() => {
-    timedOut = true;
-  }, 95000);
-
-  let status: any = null;
-  let tick = 0;
-  try {
-    while (!timedOut && Date.now() - startedAt < 90000) {
-      try {
-        const res = await connection.getSignatureStatuses([signature], { searchTransactionHistory: true });
-        status = res.value[0];
-        const conf = status?.confirmationStatus ?? null;
-        const slot = status?.slot ?? null;
-        console.log(`[confirm] tick #${tick}: slot=${slot} status=${conf}`);
-        if (status?.err) {
-          return NextResponse.json({ ok: false, error: "tx_err", err: status.err }, { status: 400 });
-        }
-        if (conf === "confirmed" || conf === "finalized") break;
-      } catch (e) {
-        console.warn("[confirm] getSignatureStatuses error:", (e as Error)?.message || e);
+  
+  // Short wait (<= 25s) then respond immediately
+  const shortDeadlineMs = 25000;
+  let status: "pending" | "confirmed" | "finalized" | "err" = "pending";
+  let lastSlot: number | null = null;
+  const started = Date.now();
+  while (Date.now() - started < shortDeadlineMs) {
+    try {
+      const res = await connection.getSignatureStatuses([signature], { searchTransactionHistory: true });
+      const st = res.value[0];
+      lastSlot = st?.slot ?? null;
+      const conf = st?.confirmationStatus ?? null;
+      console.log(`[confirm] tick: slot=${lastSlot} status=${conf}`);
+      if (st?.err) {
+        return NextResponse.json({ ok: false, error: "tx_err", err: st.err }, { status: 400 });
       }
-      tick += 1;
-      await new Promise((r) => setTimeout(r, 1500));
+      if (conf === "confirmed") { status = "confirmed"; break; }
+      if (conf === "finalized") { status = "finalized"; break; }
+    } catch (e) {
+      console.warn("[confirm] getSignatureStatuses error:", (e as Error)?.message || e);
     }
+    await new Promise((r) => setTimeout(r, 1500));
+  }
 
-    if (timedOut || Date.now() - startedAt >= 90000) {
-      return NextResponse.json({ ok: false, error: "timeout" }, { status: 504 });
-    }
+  const explorerUrl = `https://explorer.solana.com/tx/${signature}?cluster=devnet`;
+  if (status === "pending") {
+    console.log(`[confirm] short-wait timeout -> pending; elapsedMs=${Date.now() - started}`);
+    return NextResponse.json({ ok: true, pending: true, signature, explorerUrl, message: "still_pending" });
+  }
 
     const parsed = await connection.getParsedTransaction(signature, {
       maxSupportedTransactionVersion: 0,
@@ -95,18 +107,14 @@ export async function POST(req: NextRequest) {
       await Payment.updateOne({ _id: paymentId }, { $set: { txSig: signature, status: "confirmed" } });
     }
 
-    const explorerUrl = `https://explorer.solana.com/tx/${signature}?cluster=devnet`;
     return NextResponse.json({
       ok: true,
+      pending: false,
       signature,
       explorerUrl,
-      confirmationStatus: status?.confirmationStatus ?? null,
-      slot: status?.slot ?? null,
+      finalStatus: status,
       totalToTreasury,
       rpc: maskedRpc,
     });
-  } finally {
-    clearTimeout(hardTimeout);
-  }
 }
 

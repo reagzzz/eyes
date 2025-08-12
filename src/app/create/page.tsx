@@ -79,14 +79,43 @@ export default function CreatePage() {
         }
         const confirmJson = await confirmRes.json().catch(() => ({} as any));
         console.log("[flow] confirm json:", confirmJson);
-        if (!confirmJson?.ok) {
-          if (confirmJson?.error === "timeout") {
-            try { window.open(`/api/_debug/sig/${encodeURIComponent(txSig)}`, "_blank", "noreferrer"); } catch {}
-          }
+
+        // Short-circuit if confirmed already
+        if (confirmJson?.ok && confirmJson?.pending === false) {
+          toast("Paiement confirmé", "success");
+        } else if (confirmJson?.ok && confirmJson?.pending === true) {
+          // Poll payment status
+          toast("Paiement en attente de confirmations…", "success");
+          await new Promise<void>((resolve, reject) => {
+            const started = Date.now();
+            const it = setInterval(async () => {
+              try {
+                const r = await fetch(`/api/payments/status?sig=${encodeURIComponent(txSig)}`);
+                const j = await r.json().catch(() => ({} as any));
+                console.log("[flow] status:", j);
+                if (j?.status === "confirmed" || j?.status === "finalized") {
+                  clearInterval(it);
+                  resolve();
+                }
+                if (j?.status === "err") {
+                  clearInterval(it);
+                  reject(new Error("tx_err"));
+                }
+                if (Date.now() - started > 60000) { // safety cap 60s
+                  clearInterval(it);
+                  resolve();
+                }
+              } catch (e) {
+                clearInterval(it);
+                reject(e as Error);
+              }
+            }, 2000);
+          });
+          toast("Paiement confirmé", "success");
+        } else {
           throw new Error(confirmJson?.error || "confirm_failed");
         }
 
-        toast("Paiement confirmé", "success");
         console.log("[flow] summary:", {
           rpc: getRpcUrl(),
           signature: txSig,
