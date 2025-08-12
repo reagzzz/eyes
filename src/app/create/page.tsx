@@ -19,6 +19,7 @@ export default function CreatePage() {
   const { publicKey, sendTransaction, connected } = useWallet();
   const { setVisible } = useWalletModal();
   const { show: toast } = useToast();
+  const [publishing, setPublishing] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -93,39 +94,34 @@ export default function CreatePage() {
           lamportsToTreasury: confirmJson?.totalToTreasury ?? null,
         });
 
-        // 4) Start generation (with Turnstile token if configured) then publish
-        let turnstileToken: string | undefined = undefined;
+        // 4) Chaînage de création de collection (nouvel endpoint)
+        setPublishing(true);
         try {
-          const siteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
-          type Turnstile = { render: (el: HTMLElement, opts: { sitekey: string; callback: (t: string) => void; [k: string]: unknown }) => void };
-          const t = (window as unknown as { turnstile?: Turnstile }).turnstile;
-          if (siteKey && t) {
-            turnstileToken = await new Promise<string>((resolve, reject) => {
-              t.render(document.createElement("div"), {
-                sitekey: siteKey,
-                callback: (token: string) => resolve(token),
-                "error-callback": () => reject(new Error("turnstile_error")),
-                action: "generate",
-              });
-            });
+          const bodyCreate = {
+            prompt,
+            count,
+            model,
+            payer: publicKey!.toBase58(),
+            signature: txSig,
+            expectedLamports: lamports,
+          };
+          const resCreate = await fetch("/api/collections/create", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(bodyCreate),
+          });
+          const j = await resCreate.json().catch(() => ({} as any));
+          if (!resCreate.ok || !j?.ok) {
+            console.error("[flow] create failed:", { status: resCreate.status, body: j });
+            toast(`Erreur création: ${j?.message || resCreate.status}`, "error");
+            return; // rester sur place
           }
-        } catch {}
-
-        const genRes = await fetch("/api/generate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt, count, model, turnstileToken }),
-        });
-        if (!genRes.ok) throw new Error(await genRes.text());
-        const { collectionId } = await genRes.json();
-
-        const publishRes = await fetch("/api/collections/publish", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ collectionId, title: prompt.slice(0, 32) || "Collection", mintPriceSol: sol, symbol: "COLL", wallet: publicKey.toBase58() }),
-        });
-        if (!publishRes.ok) throw new Error(await publishRes.text());
-        router.push(`/collection/${collectionId}`);
+          toast("Collection publiée ✅", "success");
+          router.push(`/collection/${j.collectionId}`);
+          return; // stoppe l'ancien flow
+        } finally {
+          setPublishing(false);
+        }
       } catch (error: unknown) {
         console.error("flow_failed", error);
         const message = error instanceof Error ? error.message : "échec";
@@ -180,8 +176,8 @@ export default function CreatePage() {
 
         <div className="flex items-center justify-between">
           <PricingCalculator count={count} />
-          <Button type="submit" size="lg" disabled={isPending}>
-            {isPending ? "Traitement…" : "Payer et lancer la génération"}
+          <Button type="submit" size="lg" disabled={isPending || publishing}>
+            {publishing ? "Publication…" : isPending ? "Traitement…" : "Payer et lancer la génération"}
           </Button>
         </div>
       </form>
