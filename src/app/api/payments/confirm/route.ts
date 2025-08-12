@@ -31,7 +31,7 @@ export async function POST(req: NextRequest){
   console.log(`[confirm] signature=${signature.slice(0,6)}...${signature.slice(-6)} start=${new Date(startedAt).toISOString()}`);
 
   try {
-    const status = await waitForConfirmation(connection, signature, { timeoutMs: 60000, commitment: "confirmed" });
+    const status = await waitForConfirmation(connection, signature, { timeoutMs: 120000, commitment: "confirmed" });
     const parsed = await fetchParsedTx(connection, signature);
     if (!parsed) {
       console.warn("[confirm] parsed tx not found after confirmation");

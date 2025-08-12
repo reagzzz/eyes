@@ -59,7 +59,8 @@ export default function CreatePage() {
         tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
 
         const txSig = await sendTransaction(tx, connection);
-        console.log("[flow] signature:", txSig);
+        console.log("[flow] tx signature:", txSig);
+        toast(`Signature: ${txSig.slice(0,6)}...${txSig.slice(-6)}`, "success");
         const explorerUrl = `https://explorer.solana.com/tx/${txSig}?cluster=devnet`;
         console.log("[flow] explorer:", explorerUrl);
 
