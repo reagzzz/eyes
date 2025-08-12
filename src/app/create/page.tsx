@@ -58,16 +58,40 @@ export default function CreatePage() {
         tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
 
         const txSig = await sendTransaction(tx, connection);
+        console.log("[flow] signature:", txSig);
+        const explorerUrl = `https://explorer.solana.com/tx/${txSig}?cluster=devnet`;
+        console.log("[flow] explorer:", explorerUrl);
 
         // 3) Confirm on server
         const confirmRes = await fetch("/api/payments/confirm", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ paymentId, txSig }),
+          body: JSON.stringify({ signature: txSig, expectedLamports: lamports, treasury }),
         });
-        if (!confirmRes.ok) throw new Error(await confirmRes.text());
+        if (!confirmRes.ok) {
+          const txt = await confirmRes.text();
+          console.warn("[flow] confirm non-200:", txt);
+          // In case of timeout, open debug automatically
+          try { window.open(`/api/_debug/sig/${encodeURIComponent(txSig)}`, "_blank", "noreferrer"); } catch {}
+          throw new Error(txt || `confirm_${confirmRes.status}`);
+        }
+        const confirmJson = await confirmRes.json().catch(() => ({} as any));
+        console.log("[flow] confirm json:", confirmJson);
+        if (!confirmJson?.ok) {
+          if (confirmJson?.error === "timeout") {
+            try { window.open(`/api/_debug/sig/${encodeURIComponent(txSig)}`, "_blank", "noreferrer"); } catch {}
+          }
+          throw new Error(confirmJson?.error || "confirm_failed");
+        }
 
-        toast("Paiement confirmé. Lancement de la génération…", "success");
+        toast("Paiement confirmé", "success");
+        console.log("[flow] summary:", {
+          rpc: getRpcUrl(),
+          signature: txSig,
+          explorerUrl,
+          confirmationStatus: confirmJson?.finalStatus ?? null,
+          lamportsToTreasury: confirmJson?.totalToTreasury ?? null,
+        });
 
         // 4) Start generation (with Turnstile token if configured) then publish
         let turnstileToken: string | undefined = undefined;

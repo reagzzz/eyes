@@ -3,84 +3,89 @@ import { Payment } from "@/server/db/models";
 import { connectMongo } from "@/server/db/mongo";
 import { PublicKey } from "@solana/web3.js";
 import { getConnection, getRpcUrl } from "@/server/solana/rpc";
-import { waitForFinalized } from "@/server/solana/confirm";
+import { waitForConfirmation, fetchParsedTx } from "@/server/solana/confirm";
 
 export async function POST(req: NextRequest){
-  // Accept both simple signature flow and legacy payment verification
-  const body = await req.json();
+  const startedAt = Date.now();
+  const body = await req.json().catch(() => ({}));
   const signature: string | undefined = body?.signature || body?.txSig;
-  const paymentId: string | undefined = body?.paymentId;
-  if (!signature && !paymentId) {
+  const expectedLamportsRaw: unknown = body?.expectedLamports;
+  const treasuryStr: string | undefined = body?.treasury || (process.env.NEXT_PUBLIC_PLATFORM_TREASURY_WALLET || "").trim();
+  const paymentId: string | undefined = body?.paymentId; // optional legacy
+
+  if (!signature) {
     return NextResponse.json({ ok:false, error: "missing_signature" }, { status: 400 });
+  }
+  const expectedLamports = Number(expectedLamportsRaw);
+  if (!Number.isFinite(expectedLamports) || expectedLamports <= 0) {
+    return NextResponse.json({ ok:false, error: "invalid_expectedLamports" }, { status: 400 });
+  }
+  if (!treasuryStr) {
+    return NextResponse.json({ ok:false, error: "invalid_treasury" }, { status: 400 });
   }
 
   const rpc = getRpcUrl();
   const connection = getConnection("confirmed");
-  console.log("[confirm] rpc=", rpc);
-  if (signature) console.log("[confirm] signature=", signature);
-
-  // Always wait for finalization first to avoid tx_not_found races
-  if (signature) {
-    const res = await waitForFinalized(connection, signature, 45000, 900);
-    if (!res.ok) {
-      console.warn("[confirm] not finalized:", res);
-      return NextResponse.json({ ok:false, error: res.reason }, { status: 504 });
-    }
-  }
-
-  // If no paymentId, stop here (smoke test path)
-  if (!paymentId) {
-    return NextResponse.json({ ok:true });
-  }
-
-  await connectMongo();
-  const p = await Payment.findById(paymentId);
-  if(!p) return NextResponse.json({ ok:false, error: "payment_not_found" }, { status: 404 });
+  const maskedRpc = rpc.replace(/(api-key=)[^&]+/i, "$1***");
+  console.log(`[confirm] rpc=${maskedRpc}`);
+  console.log(`[confirm] signature=${signature.slice(0,6)}...${signature.slice(-6)} start=${new Date(startedAt).toISOString()}`);
 
   try {
-    // After finalization, parse to verify transfer + memo
-    const tx = await connection.getParsedTransaction(signature!, {
-      maxSupportedTransactionVersion: 0,
-      commitment: "finalized",
-    });
+    const status = await waitForConfirmation(connection, signature, { timeoutMs: 60000, commitment: "confirmed" });
+    const parsed = await fetchParsedTx(connection, signature);
+    if (!parsed) {
+      console.warn("[confirm] parsed tx not found after confirmation");
+      return NextResponse.json({ ok:false, error: "tx_not_found" }, { status: 404 });
+    }
 
-    if(!tx) return NextResponse.json({ ok:false, error: "tx_not_found" }, { status: 404 });
+    const treasury = new PublicKey(treasuryStr);
 
-    const treasury = new PublicKey(process.env.NEXT_PUBLIC_PLATFORM_TREASURY_WALLET!);
-    const expectedMemo = `nftgen:${p.reference}`;
-
-    const instructions = tx.transaction.message.instructions ?? [];
-
-    let hasValidTransfer = false;
-    let hasValidMemo = false;
-
+    // Sum all transfers to treasury (outer + inner)
+    let totalToTreasury = 0;
     type ParsedIx = { program?: string; parsed?: { type?: string; info?: Record<string, unknown>; memo?: string } };
-    for (const ix of instructions as ParsedIx[]) {
+    const outerIxs = (parsed.transaction.message.instructions ?? []) as unknown as ParsedIx[];
+    for (const ix of outerIxs) {
       if (ix.program === "system" && ix.parsed?.type === "transfer") {
         const dest = ix.parsed.info?.destination;
         const lamports = Number(ix.parsed.info?.lamports || 0);
-        if (dest === treasury.toBase58() && lamports >= p.lamports) {
-          hasValidTransfer = true;
-        }
+        if (dest === treasury.toBase58()) totalToTreasury += lamports;
       }
-      if (ix.program === "spl-memo") {
-        const memo = ix.parsed?.info?.memo ?? ix.parsed?.memo ?? ix.parsed?.info ?? null;
-        if (typeof memo === "string" && memo === expectedMemo) {
-          hasValidMemo = true;
+    }
+    const inner = parsed.meta?.innerInstructions ?? [];
+    for (const group of inner) {
+      for (const ix of (group.instructions ?? []) as unknown as ParsedIx[]) {
+        if (ix.program === "system" && ix.parsed?.type === "transfer") {
+          const dest = ix.parsed.info?.destination;
+          const lamports = Number(ix.parsed.info?.lamports || 0);
+          if (dest === treasury.toBase58()) totalToTreasury += lamports;
         }
       }
     }
 
-    if (!hasValidTransfer || !hasValidMemo) {
-      return NextResponse.json({ ok:false, error: "payment_not_verified", hasValidTransfer, hasValidMemo }, { status: 400 });
+    console.log(`[confirm] transfer summary: treasury=${treasury.toBase58()} totalLamports=${totalToTreasury}`);
+
+    if (totalToTreasury < expectedLamports) {
+      return NextResponse.json({ ok:false, error: "missing_or_wrong_transfer", totalToTreasury }, { status: 400 });
     }
 
-    await Payment.updateOne({ _id: paymentId }, { $set: { txSig: signature, status: "confirmed" } });
-    return NextResponse.json({ ok: true });
+    // Optional legacy DB update if provided
+    if (paymentId) {
+      await connectMongo();
+      await Payment.updateOne({ _id: paymentId }, { $set: { txSig: signature, status: "confirmed" } });
+    }
+
+    const explorerUrl = `https://explorer.solana.com/tx/${signature}?cluster=devnet`;
+    const finishedAt = Date.now();
+    console.log(`[confirm] verdict status=${status?.confirmationStatus ?? "unknown"} confirmations=${status?.confirmations ?? null} totalToTreasury=${totalToTreasury}`);
+    console.log(`[confirm] done signature=${signature.slice(0,6)}...${signature.slice(-6)} end=${new Date(finishedAt).toISOString()} durationMs=${finishedAt-startedAt}`);
+    return NextResponse.json({ ok:true, signature, explorerUrl, confirmations: status?.confirmations ?? null, finalStatus: status?.confirmationStatus ?? null, totalToTreasury, rpc: maskedRpc });
   } catch (e: unknown) {
-    console.error("[confirm] error:", (e as Error)?.message || e);
-    const message = e instanceof Error ? e.message : "verification_failed";
-    return NextResponse.json({ ok:false, error: message }, { status: 500 });
+    const msg = (e as Error)?.message || String(e);
+    if (msg === "timeout") {
+      return NextResponse.json({ ok:false, error: "timeout" }, { status: 504 });
+    }
+    console.error("[confirm] error:", msg);
+    return NextResponse.json({ ok:false, error: msg }, { status: 500 });
   }
 }
 

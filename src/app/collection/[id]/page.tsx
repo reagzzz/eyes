@@ -27,6 +27,9 @@ export default function CollectionPage() {
   const [collection, setCollection] = useState<CollectionDto | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [confirmError, setConfirmError] = useState<string | null>(null);
+  const [lastSig, setLastSig] = useState<string | null>(null);
 
   useEffect(() => {
     const id = params?.id as string | undefined;
@@ -71,6 +74,7 @@ export default function CollectionPage() {
     }
     try {
       setLoading(true);
+      setConfirmError(null);
       const res = await fetch("/api/mint/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -107,17 +111,29 @@ export default function CollectionPage() {
         throw new Error("Wallet cannot send transaction");
       }
 
-      // Confirm with backend for robustness
-      try {
-        await fetch("/api/payments/confirm", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ signature: sig }),
-        });
-      } catch {}
-
+      // Immediately show explorer and start confirmation
       show(`✅ Tx envoyée`, "success");
       window.open(`https://explorer.solana.com/tx/${sig}?cluster=devnet`, "_blank", "noreferrer");
+      setLastSig(sig);
+      setConfirming(true);
+      const TREASURY = (process.env.NEXT_PUBLIC_PLATFORM_TREASURY_WALLET || "").trim();
+      const expectedLamports = 10000; // same as compose lamports; replace by quote when available
+      try {
+        const r = await fetch("/api/payments/confirm", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ signature: sig, expectedLamports, treasury: TREASURY }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!(r.ok && j?.ok)) {
+          const err = j?.error || `HTTP_${r.status}`;
+          setConfirmError(err);
+        }
+      } catch (e) {
+        setConfirmError((e as Error)?.message || "confirm_failed");
+      } finally {
+        setConfirming(false);
+      }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Unknown error";
       console.error(err);
@@ -169,6 +185,59 @@ export default function CollectionPage() {
         )}
         {loading ? "Minting..." : "Mint NFT"}
       </button>
+      {confirming && (
+        <div className="mt-3 text-sm text-gray-600 flex items-center">
+          <svg className="animate-spin mr-2 h-4 w-4 text-gray-500" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+          </svg>
+          En attente de confirmation (jusqu’à 60s)…
+        </div>
+      )}
+      {!!confirmError && (
+        <div className="mt-2 text-sm text-red-600">
+          {confirmError === "timeout" ? (
+            <>
+              Confirmation expirée. <button
+                className="underline"
+                onClick={async () => {
+                  if (!lastSig) return;
+                  setConfirming(true);
+                  setConfirmError(null);
+                  try {
+                    const TREASURY = (process.env.NEXT_PUBLIC_PLATFORM_TREASURY_WALLET || "").trim();
+                    const expectedLamports = 10000;
+                    const r = await fetch("/api/payments/confirm", {
+                      method: "POST",
+                      headers: { "content-type": "application/json" },
+                      body: JSON.stringify({ signature: lastSig, expectedLamports, treasury: TREASURY }),
+                    });
+                    const j = await r.json().catch(() => ({}));
+                    if (r.ok && j?.ok) {
+                      setConfirming(false);
+                      setConfirmError(null);
+                    } else {
+                      const err = j?.error || `HTTP_${r.status}`;
+                      setConfirmError(err);
+                      setConfirming(false);
+                    }
+                  } catch (e) {
+                    setConfirmError((e as Error)?.message || "retry_failed");
+                    setConfirming(false);
+                  }
+                }}
+              >Réessayer</button>
+            </>
+          ) : (
+            <>Erreur: {confirmError}</>
+          )}
+        </div>
+      )}
+      {lastSig && (
+        <div className="mt-2 text-xs text-gray-500">
+          Debug: <a className="underline" href={`/api/_debug/sig/${lastSig}`} target="_blank" rel="noreferrer">/api/_debug/sig/{lastSig.slice(0,6)}…</a>
+        </div>
+      )}
     </div>
   );
 }
