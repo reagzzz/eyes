@@ -34,7 +34,7 @@ export default async function CollectionPage({ params }: { params: { id: string 
       <div className="max-w-5xl mx-auto px-4 py-10">
         <div className="rounded-xl border border-border bg-card p-8 text-center">
           <h1 className="text-2xl font-semibold mb-3">Collection introuvable</h1>
-          <p className="text-muted-foreground mb-6">Impossible de charger la collection demandée.</n> 
+          <p className="text-muted-foreground mb-6">Impossible de charger la collection demandée.</p>
           <Link href="/explore" className="inline-flex items-center rounded-lg px-4 py-2 bg-primary text-primary-foreground hover:opacity-90">
             Retour à l’explore
           </Link>
