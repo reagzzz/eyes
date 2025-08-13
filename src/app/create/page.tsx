@@ -175,8 +175,12 @@ export default function CreatePage() {
         try {
           const payload = {
             title: prompt?.slice(0, 64) || "AI Collection",
-            imageCIDs: generated.map((g) => g.imageCid),
-            metadataURIs: generated.map((g) => g.metadataUri),
+            items: generated,
+            payment: {
+              signature: txSig,
+              totalLamports: lamports,
+              treasury,
+            },
           };
           console.log("[flow] save payload:", payload);
           const res = await fetch("/api/collections/create", {

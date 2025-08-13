@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Connection } from "@solana/web3.js";
+import { getRpcUrl } from "@/server/solana/rpc";
+import { waitForConfirmation } from "@/server/solana/confirm";
 
 function maskRpc(url: string) {
   return url.replace(/(api-key=)[^&]+/i, "$1***");
@@ -16,16 +18,29 @@ async function getSignatureStatus(connection: Connection, signature: string) {
 }
 
 export async function GET(req: NextRequest) {
-  const sig = req.nextUrl.searchParams.get("sig")?.trim();
-  if (!sig) return NextResponse.json({ ok: false, error: "missing_sig" }, { status: 400 });
+  const url = req.nextUrl;
+  const signature = (url.searchParams.get("signature") || url.searchParams.get("sig") || "").trim();
+  if (!signature) return NextResponse.json({ ok: false, error: "missing_signature" }, { status: 400 });
 
-  const rpc = (process.env.NEXT_PUBLIC_RPC_URL || "").trim();
+  const rpc = getRpcUrl();
   const connection = new Connection(rpc, "confirmed");
-  const st = await getSignatureStatus(connection, sig);
-  const explorerUrl = `https://explorer.solana.com/tx/${sig}?cluster=devnet`;
+
+  // Try lightweight status first
+  const quick = await getSignatureStatus(connection, signature);
+  let status = quick.status;
+  if (status === "pending") {
+    try {
+      await waitForConfirmation(connection, signature, { timeoutMs: 60000, commitment: "confirmed", pollMs: 1000 });
+      status = "confirmed";
+    } catch {
+      // keep pending on timeout
+    }
+  }
+
+  const explorerUrl = `https://explorer.solana.com/tx/${signature}?cluster=devnet`;
   const maskedRpc = maskRpc(rpc);
-  console.log(`[status] rpc=${maskedRpc} sig=${sig.slice(0,6)}... status=${st.status}`);
-  return NextResponse.json({ ok: true, signature: sig, status: st.status, explorerUrl, rpc: maskedRpc });
+  console.log(`[status] rpc=${maskedRpc} sig=${signature.slice(0,6)}... status=${status}`);
+  return NextResponse.json({ ok: true, signature, status, explorerUrl, rpc: maskedRpc });
 }
 
 

@@ -1,51 +1,44 @@
-import Image from "next/image";
-import Link from "next/link";
-import { notFound } from "next/navigation";
-
-type CollectionItem = {
-  imageCid?: string;
-  imageUri?: string;
-  metadataCid?: string;
-  metadataUri?: string;
-};
-
-type CollectionPayload = {
-  id: string;
-  prompt: string;
-  items: CollectionItem[];
-  createdAt?: string | null;
-};
-
-async function getCollection(id: string): Promise<{ data: CollectionPayload | null; status: number }> {
-  const base = process.env.NEXT_PUBLIC_BASE_URL ?? "";
-  const url = `${base}/api/collections/${id}`;
-  const res = await fetch(url, { cache: "no-store" }).catch(() => null as any);
-  if (!res) return { data: null, status: 500 };
-  if (res.status === 404) return { data: null, status: 404 };
-  if (!res.ok) return { data: null, status: res.status };
-  const json = await res.json().catch(() => ({}));
-  const item = (json?.item || json?.collection) as CollectionPayload | undefined;
-  if (!json?.ok || !item) return { data: null, status: 500 };
-  return { data: item, status: 200 };
-}
+import { getBaseUrl, toHttpFromIpfs } from "@/server/url";
 
 export default async function CollectionPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const base = process.env.NEXT_PUBLIC_BASE_URL ?? "";
-  const res = await fetch(`${base}/api/collections/${id}`, { cache: "no-store" });
-  if (!res.ok) return notFound();
-  const json = await res.json().catch(() => ({} as any));
-  const item = json?.item ?? null;
-  if (!json?.ok || !item) return notFound();
+  const baseUrl = await getBaseUrl();
+  const res = await fetch(`${baseUrl}/api/collections/${encodeURIComponent(id)}`, { cache: "no-store" });
+  if (!res.ok) {
+    // @ts-ignore
+    const { notFound } = await import("next/navigation");
+    return notFound();
+  }
+  const { item } = await res.json();
+
+  const first = item?.items?.[0];
+  const imgSrc = first ? toHttpFromIpfs(first.imageUri || (first.imageCid ? `ipfs://${first.imageCid}` : "")) : "";
 
   return (
-    <main className="max-w-3xl mx-auto px-4 py-10">
-      <h1 className="text-2xl font-bold mb-4">Collection {id}</h1>
-      <pre className="text-xs whitespace-pre-wrap break-words rounded-lg border border-border bg-card p-4">
-        {JSON.stringify(item, null, 2)}
-      </pre>
+    <main className="container mx-auto px-4 py-10">
+      <h1 className="text-3xl font-semibold mb-6">Collection</h1>
+      <p className="text-sm text-muted-foreground mb-4">ID : {item.id}</p>
+
+      <h2 className="text-xl font-medium mb-4">{item.title}</h2>
+
+      {imgSrc ? (
+        <img
+          src={imgSrc}
+          alt={item.title || "image"}
+          className="rounded-xl border bg-card w-[600px] h-[600px] object-cover"
+        />
+      ) : (
+        <div className="w-[600px] h-[600px] rounded-xl border grid place-items-center">
+          <span className="text-muted-foreground">Aucune image</span>
+        </div>
+      )}
+
+      <pre className="mt-8 text-xs bg-muted/30 rounded-lg p-4 overflow-auto">{JSON.stringify(item, null, 2)}</pre>
     </main>
   );
 }
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 
