@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { keyOf } from "@/lib/key";
 import PricingCalculator from "@/components/PricingCalculator";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
@@ -79,14 +80,43 @@ export default function CreatePage() {
         }
         const confirmJson = await confirmRes.json().catch(() => ({} as any));
         console.log("[flow] confirm json:", confirmJson);
-        if (!confirmJson?.ok) {
-          if (confirmJson?.error === "timeout") {
-            try { window.open(`/api/_debug/sig/${encodeURIComponent(txSig)}`, "_blank", "noreferrer"); } catch {}
-          }
+
+        // Short-circuit if confirmed already
+        if (confirmJson?.ok && confirmJson?.pending === false) {
+          toast("Paiement confirmé", "success");
+        } else if (confirmJson?.ok && confirmJson?.pending === true) {
+          // Poll payment status
+          toast("Paiement en attente de confirmations…", "success");
+          await new Promise<void>((resolve, reject) => {
+            const started = Date.now();
+            const it = setInterval(async () => {
+              try {
+                const r = await fetch(`/api/payments/status?sig=${encodeURIComponent(txSig)}`);
+                const j = await r.json().catch(() => ({} as any));
+                console.log("[flow] status:", j);
+                if (j?.status === "confirmed" || j?.status === "finalized") {
+                  clearInterval(it);
+                  resolve();
+                }
+                if (j?.status === "err") {
+                  clearInterval(it);
+                  reject(new Error("tx_err"));
+                }
+                if (Date.now() - started > 60000) { // safety cap 60s
+                  clearInterval(it);
+                  resolve();
+                }
+              } catch (e) {
+                clearInterval(it);
+                reject(e as Error);
+              }
+            }, 2000);
+          });
+          toast("Paiement confirmé", "success");
+        } else {
           throw new Error(confirmJson?.error || "confirm_failed");
         }
 
-        toast("Paiement confirmé", "success");
         console.log("[flow] summary:", {
           rpc: getRpcUrl(),
           signature: txSig,
@@ -95,31 +125,86 @@ export default function CreatePage() {
           lamportsToTreasury: confirmJson?.totalToTreasury ?? null,
         });
 
-        // 4) Chaînage de création de collection (nouvel endpoint)
+        // 4) Génération d'images via IA
+        toast("Génération en cours…", "success");
+        const genRes = await fetch("/api/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt, count, model }),
+        });
+        if (!genRes.ok) {
+          const t = await genRes.text();
+          console.error("[flow] generate_failed", genRes.status, t);
+          toast(`Erreur génération: ${genRes.status}`, "error");
+          return;
+        }
+        const gen = await genRes.json().catch(() => ({} as any));
+        if (!gen?.ok || !Array.isArray(gen?.items) || gen.items.length === 0) {
+          console.error("[flow] generate bad body", gen);
+          toast("Aucune image générée", "error");
+          return;
+        }
+        toast(`${gen.items.length} image(s) générée(s)`, "success");
+        const generated = gen.items as Array<{ imageCid: string; metadataCid: string; imageUri: string; metadataUri: string }>;
+
+        // 5) Mint (MVP: utilise le premier metadataUri)
+        const first = generated[0];
+        toast("Mint en cours…", "success");
+        const mintRes = await fetch("/api/mint/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            wallet: publicKey!.toBase58(),
+            metadataUri: first.metadataUri,
+            name: "AI NFT",
+            symbol: "AINFT",
+          }),
+        });
+        if (!mintRes.ok) {
+          const t = await mintRes.text();
+          console.error("[flow] mint_failed", mintRes.status, t);
+          toast(`Erreur mint: ${mintRes.status}`, "error");
+          return;
+        }
+        const mintJson = await mintRes.json().catch(() => ({} as any));
+        console.log("[mint]", mintJson);
+        toast("NFT minté !", "success");
+
+        // 6) Aperçu simple (client) puis sauvegarde de la collection
         setPublishing(true);
         try {
-          const bodyCreate = {
-            prompt,
-            count,
-            model,
-            payer: publicKey!.toBase58(),
-            signature: txSig,
-            expectedLamports: lamports,
+          const payload = {
+            id: crypto.randomUUID(),
+            title: (prompt || "").slice(0, 64) || "Untitled",
+            prompt: prompt || null,
+            items: generated,
+            payment: {
+              signature: txSig,
+              totalLamports: lamports,
+              treasury,
+            },
+            createdAt: new Date().toISOString(),
           };
-          const resCreate = await fetch("/api/collections/create", {
+          console.log("[flow] save payload:", payload);
+          const res = await fetch("/api/collections/create", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(bodyCreate),
+            body: JSON.stringify(payload),
           });
-          const j = await resCreate.json().catch(() => ({} as any));
-          if (!resCreate.ok || !j?.ok) {
-            console.error("[flow] create failed:", { status: resCreate.status, body: j });
-            toast(`Erreur création: ${j?.message || resCreate.status}`, "error");
-            return; // rester sur place
+          const bodyTxt = await res.clone().text();
+          console.log("[flow] save res:", { status: res.status, body: bodyTxt });
+          if (!res.ok) {
+            toast(`Erreur sauvegarde: ${res.status}`, "error");
+            return;
           }
-          toast("Collection publiée ✅", "success");
-          router.push(`/collection/${j.collectionId}`);
-          return; // stoppe l'ancien flow
+          const saved = JSON.parse(bodyTxt);
+          if (!saved?.ok || !saved?.id) {
+            toast("Réponse sauvegarde invalide", "error");
+            return;
+          }
+          toast("Collection créée ✅", "success");
+          router.push(`/collection/${saved.id}`);
+          return;
         } finally {
           setPublishing(false);
         }

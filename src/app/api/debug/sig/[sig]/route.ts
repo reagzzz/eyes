@@ -5,10 +5,10 @@ import { Connection, PublicKey } from "@solana/web3.js";
 // Si query ?full=1, renvoie un debug complet avec tx parsée et transferts vers la treasury.
 export async function GET(
   req: NextRequest,
-  ctx: { params: { sig?: string } }
+  ctx: { params: Promise<{ sig?: string }> } | { params: { sig?: string } }
 ) {
-  // Next.js 15: params peut être asynchrone dans certains cas; pattern robuste:
-  const sig = ctx?.params?.sig;
+  const p = ("then" in (ctx as any).params) ? await (ctx as any).params : (ctx as any).params;
+  const sig = p?.sig as string | undefined;
   if (!sig) {
     return NextResponse.json({ ok: false, error: "missing_signature" }, { status: 400 });
   }

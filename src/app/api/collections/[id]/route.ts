@@ -1,27 +1,19 @@
-import { NextRequest, NextResponse } from "next/server";
-import { connectMongo } from "@/server/db/mongo";
-import { Collection } from "@/server/db/models";
+import { NextResponse } from "next/server";
+import { getCollection } from "@/server/db";
 
-export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
-  const { id } = params;
-
-  const hasMongo = Boolean(process.env.MONGODB_URI);
-
-  if (hasMongo) {
-    try {
-      await connectMongo();
-      const collection = await Collection.findById(id).lean();
-      if (!collection) {
-        return NextResponse.json({ error: "not_found" }, { status: 404 });
-      }
-      return NextResponse.json(collection);
-    } catch (_err) {
-      return NextResponse.json({ error: "not_found" }, { status: 404 });
-    }
+export async function GET(
+  _req: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;
+  const item = await getCollection(id);
+  if (!item) {
+    return NextResponse.json({ ok: false, error: "not_found" }, { status: 404 });
   }
-
-  // Demo-only fallback when Mongo is not configured
-  return NextResponse.json({ _id: id, title: "Demo Collection", description: "Mock data", metadataCIDs: [] });
+  return NextResponse.json({ ok: true, item }, { status: 200 });
 }
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 

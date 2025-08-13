@@ -3,7 +3,7 @@
 import { createContext, useCallback, useContext, useMemo, useState } from "react";
 import { cn } from "@/lib/cn";
 
-type ToastItem = { id: number; message: string; type?: "success" | "error" };
+type ToastItem = { id: string; message: string; type?: "success" | "error" };
 
 type ToastContextValue = {
   show: (message: string, type?: ToastItem["type"]) => void;
@@ -21,7 +21,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [items, setItems] = useState<ToastItem[]>([]);
 
   const show = useCallback((message: string, type?: ToastItem["type"]) => {
-    const id = Date.now();
+    const id = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
     setItems((prev) => [...prev, { id, message, type }]);
     setTimeout(() => setItems((prev) => prev.filter((t) => t.id !== id)), 2400);
   }, []);

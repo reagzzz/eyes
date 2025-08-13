@@ -50,4 +50,14 @@
     "tsx": "^4.20.3",
     "typescript": "^5"
   }
+  ,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "worker": "tsx src/server/worker/index.ts",
+    "tree:api": "tools/tree.sh",
+    "smoke:generate": "curl -s -X POST http://localhost:3000/api/generate -H 'content-type: application/json' -d '{\"prompt\":\"a cute cat\",\"count\":1,\"model\":\"sd35-medium\"}' | jq"
+  }
 }

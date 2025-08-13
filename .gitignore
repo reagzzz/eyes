@@ -35,3 +35,4 @@ target/
 mon-projet.zip
 anchor/init.out
 anchor/anchor-init-output.json
+data/collections.json
