@@ -1,25 +1,41 @@
 import { NextResponse } from "next/server";
-import { saveCollection, type Collection } from "@/server/db";
-import { randomUUID } from "node:crypto";
+import { promises as fs } from "node:fs";
+import path from "node:path";
+
+const DB_PATH = path.join(process.cwd(), "data", "collections.json");
+
+function uuid() {
+  return typeof crypto !== "undefined" && (crypto as any).randomUUID
+    ? (crypto as any).randomUUID()
+    : Math.random().toString(16).slice(2) + Date.now().toString(16);
+}
 
 export async function POST(req: Request) {
   try {
-    const body = (await req.json().catch(() => null)) as Partial<Collection> | null;
-    if (!body) return NextResponse.json({ ok: false, error: "invalid_json" }, { status: 400 });
+    const payload = await req.json().catch(() => ({} as any));
+    if (!payload || !payload.title || !Array.isArray(payload.items)) {
+      return NextResponse.json({ ok: false, error: "invalid_payload" }, { status: 400 });
+    }
+    const id = payload.id || uuid();
+    const createdAt = payload.createdAt || new Date().toISOString();
+    const record = { id, createdAt, ...payload };
 
-    const id = (body.id as string) ?? randomUUID();
-    const title = (body.title ?? "Untitled").toString().trim() || "Untitled";
-    const prompt = (body.prompt ?? null) as string | null;
-    const items = Array.isArray(body.items) ? (body.items as Collection["items"]) : [];
-    const payment = (body.payment as Collection["payment"]) ?? { signature: "", totalLamports: 0, treasury: "" };
-    const createdAt = (body.createdAt as string) ?? new Date().toISOString();
+    let list: any[] = [];
+    try {
+      const raw = await fs.readFile(DB_PATH, "utf8");
+      list = JSON.parse(raw || "[]");
+    } catch {}
 
-    const col: Collection = { id, title, prompt, items, payment, createdAt };
-    await saveCollection(col);
-    return NextResponse.json({ ok: true, id, item: col }, { status: 201, headers: { "cache-control": "no-store" } });
-  } catch (err) {
+    const idx = list.findIndex((x: any) => x?.id === id);
+    if (idx >= 0) list[idx] = record;
+    else list.push(record);
+
+    await fs.mkdir(path.dirname(DB_PATH), { recursive: true });
+    await fs.writeFile(DB_PATH, JSON.stringify(list, null, 2), "utf8");
+    return NextResponse.json({ ok: true, id }, { status: 201, headers: { "cache-control": "no-store" } });
+  } catch (err: any) {
     console.error("[collections/create] error:", err);
-    return NextResponse.json({ ok: false, error: "server_error" }, { status: 500 });
+    return NextResponse.json({ ok: false, error: err?.message || "server_error" }, { status: 500 });
   }
 }
 

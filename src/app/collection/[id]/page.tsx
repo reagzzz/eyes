@@ -1,13 +1,16 @@
+import Image from "next/image";
 import { notFound } from "next/navigation";
-import IpfsImage from "@/components/IpfsImage";
+import { getBaseUrl } from "@/server/baseUrl";
+import { toGatewayUrl } from "@/server/ipfs-url";
 
 export default async function CollectionPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const res = await fetch(`/api/collections/${id}`, { cache: "no-store" });
+  const base = await getBaseUrl();
+  const res = await fetch(new URL(`/api/collections/${id}`, base), { cache: "no-store" });
   if (!res.ok) return notFound();
   const json = await res.json();
   if (!json?.ok || !json?.item) return notFound();
-  const item = json.item;
+  const item = json.item as { id: string; title: string; items: any[] };
   const items = Array.isArray(item?.items) ? item.items : [];
 
   return (
@@ -19,10 +22,14 @@ export default async function CollectionPage({ params }: { params: Promise<{ id:
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
         {items.map((it: any, i: number) => {
-          const src = it?.imageUri ?? it?.imageCid ?? "";
+          const src = toGatewayUrl(it?.imageUri || it?.imageCid || "");
           return (
-            <div key={i} className="rounded-xl overflow-hidden border bg-card">
-              <IpfsImage src={src} alt={item.title || `item-${i}`} className="w-full h-[360px] object-cover" />
+            <div key={i} className="rounded-xl overflow-hidden border bg-card relative h-[360px]">
+              {src ? (
+                <Image src={src} alt={item.title || `item-${i}`} fill sizes="360px" className="object-cover" unoptimized />
+              ) : (
+                <div className="w-full h-full grid place-items-center text-muted-foreground">Aucune image</div>
+              )}
             </div>
           );
         })}
