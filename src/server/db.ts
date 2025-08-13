@@ -1,3 +1,51 @@
+import { promises as fs } from "fs";
+import path from "path";
+
+export type DbCollection = {
+  id: string;
+  title: string;
+  prompt: string | null;
+  items: Array<{
+    imageCid?: string;
+    metadataCid?: string;
+    imageUri?: string;
+    metadataUri?: string;
+  }>;
+  payment?: {
+    signature: string;
+    totalLamports: number;
+    treasury: string;
+  };
+  createdAt: string;
+};
+
+const DB_PATH = path.join(process.cwd(), "data", "collections.json");
+
+async function ensureDir() {
+  await fs.mkdir(path.dirname(DB_PATH), { recursive: true });
+}
+
+export async function readCollections(): Promise<DbCollection[]> {
+  await ensureDir();
+  try {
+    const raw = await fs.readFile(DB_PATH, "utf8");
+    if (!raw.trim()) return [];
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed as DbCollection[];
+    if (parsed && Array.isArray((parsed as any).collections)) return (parsed as any).collections as DbCollection[];
+    return [];
+  } catch {
+    return [];
+  }
+}
+
+export async function writeCollections(list: DbCollection[]) {
+  await ensureDir();
+  const tmp = DB_PATH + ".tmp";
+  await fs.writeFile(tmp, JSON.stringify(list, null, 2), "utf8");
+  await fs.rename(tmp, DB_PATH);
+}
+
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";

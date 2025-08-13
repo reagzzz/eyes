@@ -177,7 +177,7 @@ export default function CreatePage() {
             id: crypto.randomUUID(),
             title: (prompt || "").slice(0, 64) || "Untitled",
             prompt: prompt || null,
-            items: generated,
+            items: Array.isArray(generated) ? generated : [],
             payment: {
               signature: txSig,
               totalLamports: lamports,
