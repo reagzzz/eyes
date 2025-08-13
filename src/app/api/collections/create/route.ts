@@ -16,7 +16,7 @@ export async function POST(req: Request) {
 
     const col: Collection = { id, title, prompt, items, payment, createdAt };
     await saveCollection(col);
-    return NextResponse.json({ ok: true, id }, { status: 201 });
+    return NextResponse.json({ ok: true, id, item: col }, { status: 201, headers: { "cache-control": "no-store" } });
   } catch (err) {
     console.error("[collections/create] error:", err);
     return NextResponse.json({ ok: false, error: "server_error" }, { status: 500 });
