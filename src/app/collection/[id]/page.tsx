@@ -1,3 +1,45 @@
+// src/app/collection/[id]/page.tsx
+import 'server-only';
+import { notFound } from 'next/navigation';
+import { getBaseUrl } from '@/src/lib/baseUrl';
+
+type PageProps = { params: Promise<{ id: string }> };
+
+function cidToHttp(cid?: string) {
+  if (!cid) return null as string | null;
+  return `https://gateway.pinata.cloud/ipfs/${cid}`;
+}
+
+export default async function CollectionPage({ params }: PageProps) {
+  const { id } = await params;
+  const res = await fetch(`${getBaseUrl()}/api/collections/${id}`, { cache: 'no-store' });
+  if (!res.ok) return notFound();
+  const { item } = (await res.json()) as { item: any };
+
+  const first = item?.items?.[0] ?? null;
+  const imgSrc = cidToHttp(first?.imageCid);
+
+  return (
+    <div className="max-w-5xl mx-auto p-6">
+      <h1 className="text-3xl font-semibold mb-2">Collection</h1>
+      <p className="text-sm text-muted-foreground mb-6">ID : {item.id}</p>
+
+      <h2 className="text-xl font-medium mb-4">{item.title}</h2>
+
+      {imgSrc ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img alt={item.title} src={imgSrc} className="rounded-xl border bg-card aspect-square object-cover w-[560px] max-w-full" />
+      ) : (
+        <div className="rounded-xl border bg-card aspect-square w-[560px] max-w-full grid place-items-center">
+          <span className="text-muted-foreground">Aucune image</span>
+        </div>
+      )}
+
+      <pre className="mt-8 text-xs bg-muted p-4 rounded-lg overflow-auto">{JSON.stringify(item, null, 2)}</pre>
+    </div>
+  );
+}
+
 import Image from "next/image";
 import { notFound } from "next/navigation";
 import { getBaseUrl } from "@/server/baseUrl";

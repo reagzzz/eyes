@@ -1,3 +1,11 @@
+// src/lib/baseUrl.ts
+import 'server-only';
+
+// Avoid headers() in server components for base URL; stable env-based value
+export function getBaseUrl() {
+  return process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/+$/, '') || 'http://localhost:3000';
+}
+
 import { headers } from "next/headers";
 
 /** Safe base URL usable on server (Next 15: headers() must be awaited) */

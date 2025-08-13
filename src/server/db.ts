@@ -1,3 +1,87 @@
+// src/server/db.ts
+import 'server-only';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+
+export type GeneratedItem = {
+  imageCid: string;
+  metadataCid: string;
+  imageUri?: string;
+  metadataUri?: string;
+};
+
+export type PaymentInfo = {
+  signature: string;
+  totalLamports: number;
+  treasury: string;
+};
+
+export type CollectionDoc = {
+  id: string;
+  title: string;
+  prompt: string | null;
+  items: GeneratedItem[];
+  payment?: PaymentInfo;
+  createdAt: string;
+};
+
+const DATA_DIR = path.join(process.cwd(), 'data');
+const DB_PATH = path.join(DATA_DIR, 'collections.json');
+
+async function ensureDir() {
+  await fs.mkdir(DATA_DIR, { recursive: true });
+}
+
+async function readDb(): Promise<CollectionDoc[]> {
+  await ensureDir();
+  try {
+    const raw = await fs.readFile(DB_PATH, 'utf8');
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as CollectionDoc[]) : [];
+  } catch (e: any) {
+    return [];
+  }
+}
+
+async function writeDb(list: CollectionDoc[]) {
+  await ensureDir();
+  const tmp = DB_PATH + '.tmp';
+  await fs.writeFile(tmp, JSON.stringify(list, null, 2), 'utf8');
+  await fs.rename(tmp, DB_PATH);
+}
+
+export async function listCollections() {
+  return readDb();
+}
+
+export async function getCollection(id: string) {
+  const list = await readDb();
+  return list.find(c => c.id === id) ?? null;
+}
+
+export async function createCollection(input: {
+  title: string;
+  prompt: string | null;
+  items: GeneratedItem[];
+  payment?: PaymentInfo;
+}) {
+  const list = await readDb();
+
+  const doc: CollectionDoc = {
+    id: crypto.randomUUID(),
+    title: input.title,
+    prompt: input.prompt ?? null,
+    items: Array.isArray(input.items) ? input.items : [],
+    payment: input.payment,
+    createdAt: new Date().toISOString(),
+  };
+
+  list.push(doc);
+  await writeDb(list);
+  return doc;
+}
+
 import { promises as fs } from "fs";
 import path from "path";
 
