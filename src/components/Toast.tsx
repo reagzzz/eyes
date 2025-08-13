@@ -3,7 +3,7 @@
 import { createContext, useCallback, useContext, useMemo, useState } from "react";
 import { cn } from "@/lib/cn";
 
-type ToastItem = { id: number; message: string; type?: "success" | "error" };
+type ToastItem = { id: string; message: string; type?: "success" | "error" };
 
 type ToastContextValue = {
   show: (message: string, type?: ToastItem["type"]) => void;
@@ -21,7 +21,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [items, setItems] = useState<ToastItem[]>([]);
 
   const show = useCallback((message: string, type?: ToastItem["type"]) => {
-    const id = (globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`) as unknown as number;
+    const id = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
     setItems((prev) => [...prev, { id, message, type }]);
     setTimeout(() => setItems((prev) => prev.filter((t) => t.id !== id)), 2400);
   }, []);
@@ -35,7 +35,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
         <div className="flex w-full flex-col items-center space-y-2 sm:items-end">
           {items.map((t) => (
             <div
-              key={String(t.id)}
+              key={t.id}
               className={cn(
                 "pointer-events-auto w-full sm:max-w-sm rounded-xl border shadow-md backdrop-blur px-4 py-3 text-sm",
                 "bg-card/80 border-border/60",

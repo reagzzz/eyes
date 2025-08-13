@@ -174,16 +174,12 @@ export default function CreatePage() {
         setPublishing(true);
         try {
           const payload = {
-            prompt,
-            items: generated,
-            payment: {
-              signature: txSig,
-              totalLamports: lamports,
-              treasury,
-            },
+            title: prompt?.slice(0, 64) || "AI Collection",
+            imageCIDs: generated.map((g) => g.imageCid),
+            metadataURIs: generated.map((g) => g.metadataUri),
           };
           console.log("[flow] save payload:", payload);
-          const res = await fetch("/api/collections", {
+          const res = await fetch("/api/collections/create", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload),
