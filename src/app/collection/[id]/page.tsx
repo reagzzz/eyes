@@ -1,18 +1,17 @@
-import { getBaseUrl, toHttpFromIpfs } from "@/server/url";
+import { notFound } from "next/navigation";
+import { getBaseUrl } from "@/lib/baseUrl";
+import { ipfsToHttp } from "@/lib/ipfs";
 
 export default async function CollectionPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const baseUrl = await getBaseUrl();
-  const res = await fetch(`${baseUrl}/api/collections/${encodeURIComponent(id)}`, { cache: "no-store" });
-  if (!res.ok) {
-    // @ts-ignore
-    const { notFound } = await import("next/navigation");
-    return notFound();
-  }
-  const { item } = await res.json();
-
+  const base = await getBaseUrl();
+  const res = await fetch(`${base}/api/collections/${id}`, { cache: "no-store" });
+  if (!res.ok) return notFound();
+  const json = await res.json();
+  if (!json?.ok || !json?.item) return notFound();
+  const item = json.item;
   const first = item?.items?.[0];
-  const imgSrc = first ? toHttpFromIpfs(first.imageUri || (first.imageCid ? `ipfs://${first.imageCid}` : "")) : "";
+  const imgSrc = first ? ipfsToHttp(first.imageUri || first.imageCid) : "";
 
   return (
     <main className="container mx-auto px-4 py-10">

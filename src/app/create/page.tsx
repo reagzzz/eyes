@@ -174,13 +174,16 @@ export default function CreatePage() {
         setPublishing(true);
         try {
           const payload = {
-            title: prompt?.slice(0, 64) || "AI Collection",
+            id: crypto.randomUUID(),
+            title: (prompt || "").slice(0, 64) || "Untitled",
+            prompt: prompt || null,
             items: generated,
             payment: {
               signature: txSig,
               totalLamports: lamports,
               treasury,
             },
+            createdAt: new Date().toISOString(),
           };
           console.log("[flow] save payload:", payload);
           const res = await fetch("/api/collections/create", {

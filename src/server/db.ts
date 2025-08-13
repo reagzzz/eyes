@@ -2,6 +2,26 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 
+export type Item = {
+  imageCid: string;
+  metadataCid: string;
+  imageUri: string;
+  metadataUri: string;
+};
+
+export type Collection = {
+  id: string;
+  title: string;
+  prompt: string | null;
+  items: Item[];
+  payment: {
+    signature: string;
+    totalLamports: number;
+    treasury: string;
+  } | null;
+  createdAt: string;
+};
+
 const DATA_DIR = path.join(process.cwd(), "data");
 const COLLECTIONS_FILE = path.join(DATA_DIR, "collections.json");
 
