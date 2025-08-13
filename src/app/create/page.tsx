@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { keyOf } from "@/lib/key";
 import PricingCalculator from "@/components/PricingCalculator";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
@@ -144,9 +145,10 @@ export default function CreatePage() {
           return;
         }
         toast(`${gen.items.length} image(s) générée(s)`, "success");
+        const generated = gen.items as Array<{ imageCid: string; metadataCid: string; imageUri: string; metadataUri: string }>;
 
         // 5) Mint (MVP: utilise le premier metadataUri)
-        const first = gen.items[0];
+        const first = generated[0];
         toast("Mint en cours…", "success");
         const mintRes = await fetch("/api/mint/start", {
           method: "POST",
@@ -168,26 +170,37 @@ export default function CreatePage() {
         console.log("[mint]", mintJson);
         toast("NFT minté !", "success");
 
-        // 6) Sauvegarde de la collection
+        // 6) Aperçu simple (client) puis sauvegarde de la collection
         setPublishing(true);
         try {
-          const resCreate = await fetch("/api/collections/create", {
+          const payload = {
+            prompt,
+            items: generated,
+            payment: {
+              signature: txSig,
+              totalLamports: lamports,
+              treasury,
+            },
+          };
+          console.log("[flow] save payload:", payload);
+          const res = await fetch("/api/collections", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              title: prompt?.slice(0, 64) || "AI Collection",
-              imageCIDs: gen.items.map((x: any) => x.imageCid),
-              metadataURIs: gen.items.map((x: any) => x.metadataUri),
-            }),
+            body: JSON.stringify(payload),
           });
-          const j = await resCreate.json().catch(() => ({} as any));
-          if (!resCreate.ok || !j?.ok) {
-            console.error("[flow] save collection failed:", { status: resCreate.status, body: j });
-            toast(`Erreur création: ${j?.error || resCreate.status}`, "error");
+          const bodyTxt = await res.clone().text();
+          console.log("[flow] save res:", { status: res.status, body: bodyTxt });
+          if (!res.ok) {
+            toast(`Erreur sauvegarde: ${res.status}`, "error");
             return;
           }
-          toast("Collection publiée ✅", "success");
-          router.push(`/collection/${j.id}`);
+          const saved = JSON.parse(bodyTxt);
+          if (!saved?.ok || !saved?.id) {
+            toast("Réponse sauvegarde invalide", "error");
+            return;
+          }
+          toast("Collection créée ✅", "success");
+          router.push(`/collection/${saved.id}`);
           return;
         } finally {
           setPublishing(false);
