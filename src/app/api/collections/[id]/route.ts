@@ -1,27 +1,38 @@
 import { NextRequest, NextResponse } from "next/server";
-import { connectMongo } from "@/server/db/mongo";
-import { Collection } from "@/server/db/models";
+import { ObjectId } from "mongodb";
+import { getDb } from "@/server/db";
 
-export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
-  const { id } = params;
-
-  const hasMongo = Boolean(process.env.MONGODB_URI);
-
-  if (hasMongo) {
-    try {
-      await connectMongo();
-      const collection = await Collection.findById(id).lean();
-      if (!collection) {
-        return NextResponse.json({ error: "not_found" }, { status: 404 });
-      }
-      return NextResponse.json(collection);
-    } catch (_err) {
-      return NextResponse.json({ error: "not_found" }, { status: 404 });
+export async function GET(
+  _req: NextRequest,
+  ctx: { params: Promise<{ id: string }> } | { params: { id: string } }
+) {
+  try {
+    const p = ("then" in (ctx as any).params) ? await (ctx as any).params : (ctx as any).params;
+    const id = (p?.id || "").trim();
+    if (!id || !ObjectId.isValid(id)) {
+      return NextResponse.json({ ok: false, error: "invalid_id" }, { status: 400 });
     }
-  }
 
-  // Demo-only fallback when Mongo is not configured
-  return NextResponse.json({ _id: id, title: "Demo Collection", description: "Mock data", metadataCIDs: [] });
+    const db = await getDb();
+    const doc = await db.collection("collections").findOne({ _id: new ObjectId(id) });
+
+    if (!doc) {
+      return NextResponse.json({ ok: false, error: "not_found" }, { status: 404 });
+    }
+
+    const out = {
+      id: doc._id.toString(),
+      prompt: (doc as any).prompt ?? "",
+      items: Array.isArray((doc as any).items) ? (doc as any).items : [],
+      payment: (doc as any).payment ?? null,
+      createdAt: (doc as any).createdAt ?? null,
+    };
+
+    return NextResponse.json({ ok: true, collection: out }, { status: 200 });
+  } catch (err) {
+    console.error("[collections/:id.GET]", err);
+    return NextResponse.json({ ok: false, error: "server_error" }, { status: 500 });
+  }
 }
 
 
