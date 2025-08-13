@@ -1,5 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
+import { notFound } from "next/navigation";
 
 type CollectionItem = {
   imageCid?: string;
@@ -15,33 +16,24 @@ type CollectionPayload = {
   createdAt?: string | null;
 };
 
-async function getCollection(id: string): Promise<CollectionPayload | null> {
+async function getCollection(id: string): Promise<{ data: CollectionPayload | null; status: number }> {
   const base = process.env.NEXT_PUBLIC_BASE_URL ?? "";
   const url = `${base}/api/collections/${id}`;
   const res = await fetch(url, { cache: "no-store" }).catch(() => null as any);
-  if (!res || !res.ok) return null;
+  if (!res) return { data: null, status: 500 };
+  if (res.status === 404) return { data: null, status: 404 };
+  if (!res.ok) return { data: null, status: res.status };
   const json = await res.json().catch(() => ({}));
-  if (!json?.ok || !json?.collection) return null;
-  return json.collection as CollectionPayload;
+  const item = (json?.item || json?.collection) as CollectionPayload | undefined;
+  if (!json?.ok || !item) return { data: null, status: 500 };
+  return { data: item, status: 200 };
 }
 
 export default async function CollectionPage({ params }: { params: { id: string } }) {
-  const id = params?.id;
-  const data = id ? await getCollection(id) : null;
-
-  if (!data) {
-    return (
-      <div className="max-w-5xl mx-auto px-4 py-10">
-        <div className="rounded-xl border border-border bg-card p-8 text-center">
-          <h1 className="text-2xl font-semibold mb-3">Collection introuvable</h1>
-          <p className="text-muted-foreground mb-6">Impossible de charger la collection demandée.</p>
-          <Link href="/explore" className="inline-flex items-center rounded-lg px-4 py-2 bg-primary text-primary-foreground hover:opacity-90">
-            Retour à l’explore
-          </Link>
-        </div>
-      </div>
-    );
-  }
+  const { id } = params;
+  const { data, status } = await getCollection(id);
+  if (!data && status === 404) return notFound();
+  if (!data) return notFound();
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-10">
